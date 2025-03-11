@@ -10,7 +10,7 @@ This repository provides tools for:
 ```
 membrane_segmentation/
 │── data/                          # Data directory
-│   ├── raw/                       # Raw Mem3DG input files
+│   ├── raw/                        # Raw Mem3DG input files
 │   ├── synthetic/                  # Generated pseudo cryo-ET data
 │   ├── processed/                  # Preprocessed data for training
 │
@@ -19,12 +19,12 @@ membrane_segmentation/
 │   │   ├── mesh_to_cryoet.py       # Converts Mem3DG meshes into pseudo cryo-ET
 │   ├── pinn_segmentation/          # PINN model for membrane segmentation
 │
-│── notebooks/                      # Jupyter notebooks for experiments
+│── notebooks/                     # Jupyter notebooks for experiments
 │   ├── data_generation_demo.ipynb  # Walkthrough of synthetic data generation
 │
 │── requirements.txt                # Dependencies for pip installation
 │── README.md                       # Project documentation
-│── LICENSE 						# MIT License file
+│── LICENSE                         # MIT License file
 │── .gitignore                      # Files ignored by Git
 ```
 

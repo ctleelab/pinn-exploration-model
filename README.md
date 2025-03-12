@@ -17,10 +17,17 @@ membrane_segmentation/
 │── src/                           # Source code
 │   ├── data_generation/            # Code for synthetic data generation
 │   │   ├── mesh_to_cryoet.py       # Converts Mem3DG meshes into pseudo cryo-ET
-│   ├── pinn_segmentation/          # PINN model for membrane segmentation
+│   ├── pinn/                       # PINN model for membrane segmentation
 │
 │── notebooks/                     # Jupyter notebooks for experiments
 │   ├── data_generation_demo.ipynb  # Walkthrough of synthetic data generation
+│   ├── pinn_demo.ipynb             # Walkthrough of PINN-based segmentation
+│
+│── outputs/                       # General outputs from executions
+│   ├── figs/                       # Figures/plots from experiments
+│   ├── logs/                       # Logs and metrics
+│   ├── models/                     # Saved models/checkpoints
+│   ├── predictions/                # Final predictions/results
 │
 │── requirements.txt                # Dependencies for pip installation
 │── README.md                       # Project documentation

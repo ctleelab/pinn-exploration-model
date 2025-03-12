@@ -29,7 +29,8 @@ def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
     # Plot the cryo-ET data as a background heatmap
     if cryoET_data is not None:
         cryoET_numpy = np.array(cryoET_data[:, :, mid_slice])
-        alpha_mask = np.where(cryoET_numpy == 1, 0.5, 0.0)
+        # alpha_mask = np.where(cryoET_numpy == 1, 0.5, 0.0)
+        alpha_mask = np.where(cryoET_numpy > 0.7, 0.5, 0.0)  # Show all intensities > 0.7
         ax.imshow(np.ones_like(cryoET_numpy), cmap='grey', origin='lower',
           extent=[x.min(), x.max(), y.min(), y.max()], alpha=alpha_mask)
 

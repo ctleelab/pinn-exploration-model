@@ -2,6 +2,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
+import mrcfile
 
 # Define a synthetic cryo-ET dataset where the membrane edge has higher intensity
 def generate_synthetic_cryoET(grid_size=64, radius=1.0, edge_thickness=0.05, noise_level=0.1):
@@ -73,9 +74,29 @@ def plot_synthetic_cryoET(cryoET_data, grid_size=64):
     plt.show()
 
 
+def load_mrc_data(file_path, grid_size=64):
+    """
+    Loads a 3D cryo-ET membrane image from an MRC file and normalizes it.
+    
+    Args:
+        file_path (str): Path to the MRC file.
+        grid_size (int): Size of the grid (rescaling if needed).
+        
+    Returns:
+        jnp.ndarray: Normalized 3D cryo-ET data.
+    """
+    with mrcfile.open(file_path, permissive=True) as mrc:
+        mrc_data = mrc.data.astype(jnp.float32)  # Convert to JAX-compatible float32
 
-# # Generate synthetic cryo-ET data
-# cryoET_data = generate_synthetic_cryoET()
-# # Plot
-# plot_synthetic_cryoET(cryoET_data)
+    # Normalize intensity to [0,1]
+    mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
+
+    # Ensure the data shape matches the expected grid size
+    if mrc_data.shape != (grid_size, grid_size, grid_size):
+        print(f"Resizing MRC data from {mrc_data.shape} to ({grid_size}, {grid_size}, {grid_size})")
+        from skimage.transform import resize
+        mrc_data = resize(mrc_data, (grid_size, grid_size, grid_size), mode='reflect', anti_aliasing=True)
+        mrc_data = jnp.array(mrc_data)  # Convert back to JAX array
+
+    return mrc_data
 

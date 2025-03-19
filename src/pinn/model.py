@@ -22,18 +22,6 @@ class PINN(nn.Module):
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
         return x.squeeze()
 
-# class PINN(nn.Module):
-#     hidden_dim: int = 128  # Increase hidden size
-
-#     @nn.compact
-#     def __call__(self, x):
-#         x = jnp.atleast_2d(x)
-#         for _ in range(4):  # More layers
-#             x = nn.Dense(self.hidden_dim)(x)
-#             x = nn.tanh(x)
-#         x = nn.Dense(1)(x)  
-#         return x.squeeze()
-
 
 # Compute first derivatives (∇φ) with vectorized differentiation
 def grad_phi(phi_fn, x):

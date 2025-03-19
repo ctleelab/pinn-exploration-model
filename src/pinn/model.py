@@ -22,6 +22,19 @@ class PINN(nn.Module):
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
         return x.squeeze()
 
+# class PINN(nn.Module):
+#     hidden_dim: int = 128  # Increase hidden size
+
+#     @nn.compact
+#     def __call__(self, x):
+#         x = jnp.atleast_2d(x)
+#         for _ in range(4):  # More layers
+#             x = nn.Dense(self.hidden_dim)(x)
+#             x = nn.tanh(x)
+#         x = nn.Dense(1)(x)  
+#         return x.squeeze()
+
+
 # Compute first derivatives (∇φ) with vectorized differentiation
 def grad_phi(phi_fn, x):
     x = x.reshape(-1, 3)  # Ensure correct shape
@@ -94,23 +107,37 @@ def loss_data(phi_fn, cryoET_data):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
+    # x_grid, y_grid, z_grid = jnp.meshgrid(
+    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
+    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
+    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
+    #     indexing="ij"
+    # )
+    # x_grid, y_grid, z_grid = jnp.meshgrid(
+    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
+    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
+    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
+    #     indexing="ij"
+    # )
     x_grid, y_grid, z_grid = jnp.meshgrid(
-        jnp.linspace(-1.5, 1.5, GRID_SIZE),
-        jnp.linspace(-1.5, 1.5, GRID_SIZE),
-        jnp.linspace(-1.5, 1.5, GRID_SIZE),
+        jnp.linspace(-1, 1, GRID_SIZE),
+        jnp.linspace(-1, 1, GRID_SIZE),
+        jnp.linspace(-1, 1, GRID_SIZE),
         indexing="ij"
     )
+
     grid_points = jnp.stack([x_grid.ravel(), y_grid.ravel(), z_grid.ravel()], axis=-1)  # Shape: (N, 3)
 
-    # Use jax.vmap() to compute gradient at multiple points
-    grad_phi_fn = jax.vmap(jax.grad(phi_fn, argnums=0))  # Apply grad to each point
-    grad_phi_x = grad_phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE, 3)
+    # # Use jax.vmap() to compute gradient at multiple points
+    # grad_phi_fn = jax.vmap(jax.grad(phi_fn, argnums=0))  # Apply grad to each point
+    # grad_phi_x = grad_phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE, 3)
 
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
-    binary_mask = jnp.where(cryoET_data > 0, 1, 0)
+    binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
     membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
 
     return membrane_loss
+
 
 
 # Physics loss (enforces the Helfrich equation)

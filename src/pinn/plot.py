@@ -43,7 +43,7 @@ def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
     contour = ax.contour(X[:, :, mid_slice], Y[:, :, mid_slice], 
                          phi_values[:, :, mid_slice], levels=[0], colors='black')
 
-    ax.clabel(contour, fmt="φ=0", colors='black')  # Label contour line
+    # ax.clabel(contour, fmt="φ=0", colors='black')  # Label contour line
 
     
     ax.set_xlabel("X-axis")
@@ -121,7 +121,7 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
 
     # **3. Overlay contour lines for φ=0**
     contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors="black", linewidths=1.5)
-    ax.clabel(contour, fmt="φ=0", colors="black")  # Label contour line
+    # ax.clabel(contour, fmt="φ=0", colors="black")  # Label contour line
 
     # Set axis labels
     ax.set_xlabel(xlabel)
@@ -190,12 +190,16 @@ def visualize_cryoET_with_contours(ax, step, checkpoint, cryoET_data, grid_size=
         contour_x, contour_y = Y[slice_index, :, :], Z[slice_index, :, :]
 
     # Plot CryoET grayscale image
-    ax.imshow(cryoET_numpy, cmap='gray', origin='lower',
+    # ax.imshow(cryoET_numpy, cmap='gray', origin='lower',
+              # extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
+
+    binary_mask = np.where(cryoET_numpy > 0.8, 1, 0)
+    ax.imshow(binary_mask, cmap='gray', origin='lower',
               extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
 
     # Extract contour lines for φ=0 and overlay them
     contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=1.5)
-    ax.clabel(contour, fmt="φ=0", colors='red')  # Label contour line
+    # ax.clabel(contour, fmt="φ=0", colors='red')  # Label contour line
 
     # Set axis labels
     ax.set_xlabel(xlabel)

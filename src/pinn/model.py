@@ -9,18 +9,49 @@ GRID_SIZE = 64
 
 class PINN(nn.Module):
     hidden_dim: int = 64  # Hidden layer size
+    num_frequencies: int = 10 # Number of frequencies for positional encoding
 
     @nn.compact
     def __call__(self, x):
         x = jnp.atleast_2d(x)  # Ensure input is at least 2D
         if x.shape[-1] != 3:
             raise ValueError(f"Expected input shape (*,3), but got {x.shape}")
-        x = nn.Dense(self.hidden_dim)(x)
+
+        # Apply positional encoding
+        x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
+
+        x = nn.Dense(self.hidden_dim)(x_encoded)
+        # x = nn.Dense(self.hidden_dim)(x)
         x = nn.tanh(x)
         x = nn.Dense(self.hidden_dim)(x)
         x = nn.tanh(x)
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
+        # x = nn.relu(x)
         return x.squeeze()
+
+
+def positional_encoding(x, num_frequencies=10, include_input=True):
+    """
+    Apply sinusoidal positional encoding to input x.
+
+    Args:
+        x: input of shape (..., 3)
+        num_frequencies: number of frequency bands
+        include_input: whether to include the raw input x in the output
+
+    Returns:
+        Encoded input of shape (..., 3 * (2 * num_frequencies + include_input))
+    """
+    x = jnp.atleast_2d(x)
+    freq_bands = 2.0 ** jnp.arange(num_frequencies) * jnp.pi  # shape: (num_frequencies,)
+    encodings = [x] if include_input else []
+
+    for freq in freq_bands:
+        encodings.append(jnp.sin(freq * x))
+        encodings.append(jnp.cos(freq * x))
+
+    return jnp.concatenate(encodings, axis=-1)
+
 
 
 # Compute first derivatives (∇φ) with vectorized differentiation
@@ -95,18 +126,6 @@ def loss_data(phi_fn, cryoET_data):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
-    # x_grid, y_grid, z_grid = jnp.meshgrid(
-    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
-    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
-    #     jnp.linspace(-1.5, 1.5, GRID_SIZE),
-    #     indexing="ij"
-    # )
-    # x_grid, y_grid, z_grid = jnp.meshgrid(
-    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
-    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
-    #     jnp.linspace(0, GRID_SIZE - 1, GRID_SIZE),
-    #     indexing="ij"
-    # )
     x_grid, y_grid, z_grid = jnp.meshgrid(
         jnp.linspace(-1, 1, GRID_SIZE),
         jnp.linspace(-1, 1, GRID_SIZE),
@@ -121,11 +140,42 @@ def loss_data(phi_fn, cryoET_data):
     # grad_phi_x = grad_phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE, 3)
 
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
-    binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
+    # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
+    binary_mask = jnp.where(cryoET_data > 0.8, 1, 0)
     membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
 
     return membrane_loss
 
+
+# def loss_physics(phi_fn, x, eps=1e-2):
+#     phi = phi_fn(x)  # Evaluate φ(x)
+    
+#     # Compute physics terms
+#     H = mean_curvature(phi_fn, x)
+#     Delta_H = laplacian_mean_curvature(phi_fn, x)
+#     K = gaussian_curvature(phi_fn, x)
+
+#     # Residual from the Helfrich shape equation
+#     residual = Delta_H + 2 * H * (H**2 - K)
+
+#     # Mask: keep only points near the zero level set
+#     mask = jnp.abs(phi) < eps
+
+#     # Optional: avoid division by zero if no points in mask
+#     masked_residual = jnp.where(mask, residual, 0.0)
+#     normalization = jnp.maximum(mask.sum(), 1)
+
+#     return jnp.sum(masked_residual**2) / normalization
+
+# # Physics loss (enforces the Helfrich equation)
+# def loss_physics(phi_fn, x):
+#     H = mean_curvature(phi_fn, x)
+#     Delta_H = laplacian_mean_curvature(phi_fn, x)
+#     K = gaussian_curvature(phi_fn, x)
+
+#     physics_residual = H
+
+#     return jnp.mean(physics_residual**2)
 
 
 # Physics loss (enforces the Helfrich equation)
@@ -142,6 +192,7 @@ def loss_physics(phi_fn, x):
     # jax.debug.print("Physics Residual Min/Max: {}/{}", physics_residual.min(), physics_residual.max())
 
     return jnp.mean(physics_residual**2)
+
 
 # Combined loss function
 def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):

@@ -85,6 +85,8 @@ def generate_sdf(grid_size=64, radius=0.5):
 
     # Compute SDF for a sphere (normalized)
     sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
+    # sdf_values = jnp.abs(sdf_values)
+    # sdf_values = -sdf_values
 
     # Flatten grid points for training
     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
@@ -110,6 +112,7 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
         loss, grads = jax.value_and_grad(loss_fn)(p)
         updates, opt_state = optimizer.update(grads, opt_state)
         p = optax.apply_updates(p, updates)
+
         return p, opt_state, loss
 
     # Optimization loop
@@ -117,7 +120,11 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
         params, opt_state, loss_val = train_step(params, opt_state)
 
         if step % 20 == 0:
-            print(f"Pre-training Step {step}, Loss: {loss_val:.6f}")
+            # print(f"Pre-training Step {step}, Loss: {loss_val:.6f}")
+            predictions = model.apply(params, grid_points)
+            print(f"Pre-training Step {step}, Loss: {loss_val:.6f}, "
+              f"Pred min: {predictions.min():.6f}, Pred max: {predictions.max():.6f}")
+
 
     return params
 

@@ -111,7 +111,8 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
     # **1. Plot the Level-Set Function φ values using imshow**
     img = ax.imshow(slice_data, cmap="bwr", origin="lower",
                     extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()],
-                    vmin=-0.5, vmax=0.5, alpha=1.0)
+                    # vmin=-0.5, vmax=0.5, alpha=1.0)
+                    vmin=-1.0, vmax=1.0, alpha=1.0)
 
     # **2. Overlay the CryoET grayscale image (if available)**
     # if cryoET_numpy is not None:

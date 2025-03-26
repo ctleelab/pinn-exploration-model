@@ -19,6 +19,7 @@ class PINN(nn.Module):
 
         # Apply positional encoding
         x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
+        # x_encoded = x
 
         x = nn.Dense(self.hidden_dim)(x_encoded)
         # x = nn.Dense(self.hidden_dim)(x)
@@ -58,6 +59,11 @@ def positional_encoding(x, num_frequencies=10, include_input=True):
 def grad_phi(phi_fn, x):
     x = x.reshape(-1, 3)  # Ensure correct shape
     return vmap(lambda x_i: grad(lambda x: phi_fn(jnp.atleast_2d(x)).squeeze())(x_i))(x)
+
+# Compute Δφ (Laplacian of φ)
+def laplacian_phi(phi_fn, x):
+    x = x.reshape(-1, 3)
+    return vmap(lambda x_i: jnp.trace(jacfwd(grad(lambda x: phi_fn(jnp.atleast_2d(x)).squeeze()))(x_i)))(x)
 
 # Compute second derivatives (Hessian ∇²φ) with vectorized differentiation
 def hessian_phi(phi_fn, x):
@@ -178,20 +184,25 @@ def loss_data(phi_fn, cryoET_data):
 #     return jnp.mean(physics_residual**2)
 
 
-# Physics loss (enforces the Helfrich equation)
-def loss_physics(phi_fn, x):
-    H = mean_curvature(phi_fn, x)
-    Delta_H = laplacian_mean_curvature(phi_fn, x)
-    K = gaussian_curvature(phi_fn, x)
+# # Physics loss
+# def loss_physics(phi_fn, x):
+#     H = mean_curvature(phi_fn, x)
+#     Delta_H = laplacian_mean_curvature(phi_fn, x)
+#     K = gaussian_curvature(phi_fn, x)
+#     physics_residual = Delta_H + 2 * H * (H**2 - K)
 
-    physics_residual = Delta_H + 2 * H * (H**2 - K)
-    # physics_residual = Delta_H + 2 * H * (H**2)
+#     return jnp.mean(physics_residual**2)
 
-    # jax.debug.print("Mean Curvature Min/Max: {}/{}", H.min(), H.max())
-    # jax.debug.print("Laplacian H Min/Max: {}/{}", Delta_H.min(), Delta_H.max())
-    # jax.debug.print("Physics Residual Min/Max: {}/{}", physics_residual.min(), physics_residual.max())
 
-    return jnp.mean(physics_residual**2)
+# New physics loss based on Allen-Cahn-like equation
+def loss_physics(phi_fn, x, epsilon = 0.05):
+    phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+    lap_phi = laplacian_phi(phi_fn, x)
+
+    residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
+    # residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * (phi_vals**2 - 1)
+    # return (epsilon / 2) * jnp.mean(residual**2)
+    return jnp.mean(residual**2)
 
 
 # Combined loss function

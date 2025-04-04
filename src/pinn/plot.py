@@ -3,7 +3,7 @@ from skimage import measure
 import jax
 import jax.numpy as jnp
 import numpy as np
-from pinn.model import PINN
+from pinn.model import PINN, laplacian_phi, grad_phi, hessian_phi
 from skimage.measure import marching_cubes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -66,7 +66,7 @@ def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
 
 
 
-def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_size=64, slice_index=32, axis="z"):
+def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_size=64, slice_index=32, axis="z", colorbar=False):
     """
     Compute and visualize the level-set function from a given checkpoint.
     Uses voxel-based coordinates, consistent with `visualize_cryoET_with_contours`.
@@ -136,6 +136,9 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
     ax.set_xticklabels(voxel_labels)
     ax.set_yticks(tick_positions)
     ax.set_yticklabels(voxel_labels)
+
+    if colorbar is True:
+        cbar = plt.colorbar(img, ax=ax, shrink=0.6)
 
 
     ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
@@ -220,6 +223,106 @@ def visualize_cryoET_with_contours(ax, step, checkpoint, cryoET_data, grid_size=
 
 
 
+def visualize_physics_loss(ax, step, checkpoint, epsilon, component, grid_size=64, slice_index=32, axis="z", vmin=None, vmax=None, colorbar=True):
+    """
+    Visualize the residual of the Allen-Cahn PDE:
+    Δφ - (1/ε²)(φ² - 1)φ on a 2D slice from the 3D domain.
+    """
+    valid_components = ["residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz"]
+    if component not in valid_components:
+        raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
+
+    state = checkpoint["state"]
+    params = state["params"]
+
+    model = PINN()
+    phi_fn = lambda x: model.apply(params, x)
+
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+
+    X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
+    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+    # Compute φ values and Laplacian
+    phi_vals = phi_fn(grid_points).squeeze()
+    lap_phi  = laplacian_phi(phi_fn, grid_points)
+    nl_term  = (phi_vals**2 - 1) * phi_vals
+    residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
+    gradient = grad_phi(phi_fn, grid_points)
+    hessian  = hessian_phi(phi_fn, grid_points)
+
+    if component == "residual":
+        values = residual
+    elif component == "laplacian":
+        values = lap_phi
+    elif component == "nonlinear":
+        values = nl_term
+    elif component == "grad_x":
+        values = gradient[:, 0]
+    elif component == "grad_y":
+        values = gradient[:, 1]
+    elif component == "grad_z":
+        values = gradient[:, 2]
+    elif component == "hess_xx":
+        values = hessian[:, 0, 0]
+    elif component == "hess_yy":
+        values = hessian[:, 1, 1]
+    elif component == "hess_zz":
+        values = hessian[:, 2, 2]
+
+
+    # values = values**2
+    values = jnp.abs(values)
+    values = values.reshape(grid_size, grid_size, grid_size)
+
+    if axis == "z":
+        slice_data = values[:, :, slice_index]
+        x_extent, y_extent = x, y
+        xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
+    elif axis == "y":
+        slice_data = values[:, slice_index, :]
+        x_extent, y_extent = x, z
+        xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
+    elif axis == "x":
+        slice_data = values[slice_index, :, :]
+        x_extent, y_extent = y, z
+        xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
+
+
+    if vmin is None:
+        vmin = float(slice_data.min())
+    if vmax is None:
+        vmax = float(slice_data.max())
+
+    img = ax.imshow(slice_data, cmap="coolwarm", origin="lower",
+                    extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()],
+                    vmin=vmin, vmax=vmax, alpha=1.0)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    if colorbar is True:
+        cbar = plt.colorbar(img, ax=ax, shrink=0.6)
+        # cbar.set_label("Residual value")        
+
+    tick_positions = np.linspace(-1, 1, num=5)
+    voxel_labels = np.linspace(0, grid_size - 1, num=5).astype(int)
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(voxel_labels)
+    ax.set_yticks(tick_positions)
+    ax.set_yticklabels(voxel_labels)
+
+    ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+
+    return img
+
+
+
+
+
 
 def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
     """
@@ -230,6 +333,7 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
         checkpoint_path (str): Path to the checkpoint directory.
         checkpoint_label (str): Label for the plot title.
     """
+
     # Define normalized coordinate grid (-1 to 1)
     x = jnp.linspace(-1, 1, grid_size)
     y = jnp.linspace(-1, 1, grid_size)
@@ -265,10 +369,16 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
 
 
     # Set axis labels
-    ax.set_xlabel("X-axis", fontsize=10, labelpad=8)
-    ax.set_ylabel("Y-axis", fontsize=10, labelpad=8)
-    ax.set_zlabel("Z-axis", fontsize=10, labelpad=8)
-    ax.set_title(f"Step {step}", fontsize=12)
+    # ax.set_xlabel("X-axis", fontsize=10, labelpad=8)
+    # ax.set_ylabel("Y-axis", fontsize=10, labelpad=8)
+    # ax.set_zlabel("Z-axis", fontsize=10, labelpad=8)
+    # ax.set_xticks([])
+    # ax.set_yticks([])
+    # ax.set_zticks([])
+
+    # ax.set_title(f"Step {step}", fontsize=12)
+    ax.set_title(f"Step {step}", fontsize=12, y=0.9)
+
 
     # Adjust camera angle & axis limits
     ax.view_init(elev=30, azim=45)  # Adjust view angle
@@ -315,6 +425,30 @@ def plot_loss_history(assembled_loss):
     plt.show()
 
 
+def plot_loss_history_ax(ax, assembled_loss):
+    """
+    Plot the loss function over the entire training process.
+
+    Args:
+        assembled_loss (dict): Aggregated loss history containing 'step', 'total_loss', 'data_loss', 'physics_loss'.
+    """
+    
+    # Plot the losses
+    ax.plot(assembled_loss["step"], assembled_loss["data_loss"], label='Data Loss', marker='o', linestyle='-')
+    ax.plot(assembled_loss["step"], assembled_loss["physics_loss"], label='Physics Loss', marker='s', linestyle='-')
+    ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
+
+    # Use log scale for better visualization (especially if physics loss is large)
+    ax.set_yscale('log')
+
+    ax.set_xlabel('Training Steps')
+    ax.set_ylabel('Loss Value')
+    ax.set_title('Loss Function Over Training')
+
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.legend()
+
+
 
 def plot_normalized_loss_history(assembled_loss):
     """
@@ -356,6 +490,47 @@ def plot_normalized_loss_history(assembled_loss):
     # Adjust layout for clarity
     plt.tight_layout()
     plt.show()
+
+
+
+def plot_normalized_loss_history_ax(ax, id, assembled_loss):
+    """
+    Plot three normalized loss functions (Data Loss, Physics Loss, and Total Loss) side by side.
+    Each function is scaled by its initial value at step = 0.
+
+    Args:
+        assembled_loss (dict): Aggregated loss history containing 'step', 'total_loss', 'data_loss', 'physics_loss'.
+    """
+
+    # Normalize loss values by their initial step=0 value
+    data_loss_norm = assembled_loss["data_loss"] / assembled_loss["data_loss"][0]
+    physics_loss_norm = assembled_loss["physics_loss"] / assembled_loss["physics_loss"][0]
+    total_loss_norm = assembled_loss["total_loss"] / assembled_loss["total_loss"][0]
+
+
+    if id == 0:     # Plot Data Loss
+        ax.plot(assembled_loss["step"], data_loss_norm, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Normalized Data Loss")
+        ax.set_xlabel("Training Steps")
+        ax.set_ylabel("Loss Value (scaled)")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    elif id == 1:    # Plot Physics Loss
+        ax.plot(assembled_loss["step"], physics_loss_norm, marker='s', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Normalized Physics Loss")
+        ax.set_xlabel("Training Steps")
+        ax.set_ylabel("Loss Value (scaled)")        
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    elif id == 2:    # Plot Total Loss
+        ax.plot(assembled_loss["step"], total_loss_norm, marker='^', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Normalized Total Loss")
+        ax.set_xlabel("Training Steps")
+        ax.set_ylabel("Loss Value (scaled)")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
 

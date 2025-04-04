@@ -8,7 +8,8 @@ from flax.training import train_state
 GRID_SIZE = 64
 
 class PINN(nn.Module):
-    hidden_dim: int = 64  # Hidden layer size
+    # hidden_dim: int = 64  # Hidden layer size
+    hidden_dim: int = 16  # Hidden layer size
     num_frequencies: int = 10 # Number of frequencies for positional encoding
 
     @nn.compact
@@ -19,12 +20,11 @@ class PINN(nn.Module):
 
         # Apply positional encoding
         x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
-        # x_encoded = x
 
         x = nn.Dense(self.hidden_dim)(x_encoded)
-        # x = nn.Dense(self.hidden_dim)(x)
         x = nn.tanh(x)
         x = nn.Dense(self.hidden_dim)(x)
+
         x = nn.tanh(x)
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
         # x = nn.relu(x)
@@ -147,8 +147,22 @@ def loss_data(phi_fn, cryoET_data):
 
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
+
     binary_mask = jnp.where(cryoET_data > 0.8, 1, 0)
-    membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
+    # binary_mask = cryoET_data
+
+    # membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
+
+    phi = phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE)
+    # membrane_loss = jnp.mean(
+    #     (binary_mask * (phi - 0.0) ** 2) +                # penalize phi ≠ 0 where mask = 1
+    #     ((1 - binary_mask) * (phi ** 2 - 1.0) ** 2)       # penalize phi ≠ ±1 where mask = 0
+    # )
+
+    weight_in = 0.95
+    inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
+    outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
+    membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
 
     return membrane_loss
 

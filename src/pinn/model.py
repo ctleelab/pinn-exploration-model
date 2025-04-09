@@ -20,6 +20,7 @@ class PINN(nn.Module):
 
         # Apply positional encoding
         x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
+        # x_encoded = x
 
         x = nn.Dense(self.hidden_dim)(x_encoded)
         x = nn.tanh(x)
@@ -222,5 +223,27 @@ def loss_physics(phi_fn, x, epsilon = 0.05):
 # Combined loss function
 def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
     return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
+
+
+
+def phase_volume(phi_fn, x, V_box=8):
+    phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+    value = 1 + phi_vals
+    volume = jnp.sum(value*0.5)
+    volume *= V_box / x.shape[0]
+
+    return volume
+
+def phase_surface(phi_fn, x, epsilon, V_box=8):
+    phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+    grad_val = grad_phi(phi_fn, x)
+    sq_grad = jnp.sum(grad_val ** 2, axis=1)
+
+    value = epsilon * sq_grad + (1 / 2.0 / epsilon) * (1 - phi_vals**2)**2
+    value *= 3/4/jnp.sqrt(2)
+    area = jnp.sum(value)
+    area *= V_box / x.shape[0]
+    
+    return area
 
 

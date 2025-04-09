@@ -90,7 +90,8 @@ def generate_sdf(grid_size=64, radius=0.5):
 
     # Flatten grid points for training
     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
-    sdf_values = sdf_values.ravel()  # Flatten the SDF values
+    # sdf_values = sdf_values.ravel()  # Flatten the SDF values
+    sdf_values = -sdf_values.ravel()  # Flatten the SDF values
 
     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
 
@@ -124,7 +125,6 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
             predictions = model.apply(params, grid_points)
             print(f"Pre-training Step {step}, Loss: {loss_val:.6f}, "
               f"Pred min: {predictions.min():.6f}, Pred max: {predictions.max():.6f}")
-
 
     return params
 

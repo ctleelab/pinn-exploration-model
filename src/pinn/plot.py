@@ -6,6 +6,7 @@ import numpy as np
 from pinn.model import PINN, laplacian_phi, grad_phi, hessian_phi
 from skimage.measure import marching_cubes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from pinn.model import phase_volume, phase_surface
 
 def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
     """
@@ -533,5 +534,46 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
+def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V_0=None, A_0=None):
 
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+
+    X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
+    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+    assembled_data = {"step": [], "value": []}
+
+    for step in checkpoint:
+        checkpoint_data = checkpoint[step]
+
+        state  = checkpoint_data["state"]
+        params = state["params"]
+
+        model = PINN()
+        phi_fn = lambda x: model.apply(params, x)
+
+        if metrics == "volume":
+            value = phase_volume(phi_fn, grid_points)
+        elif metrics == "area":
+            value = phase_surface(phi_fn, grid_points, epsilon)
+        else:
+            raise ValueError(f"Unknown metric type: {metrics}")
+
+        assembled_data["step"].append(step)
+        assembled_data["value"].append(value)
+
+    ax.plot(assembled_data["step"], assembled_data["value"], label=metrics)
+
+    if V_0 is not None:
+        ax.axhline(y=V_0, linestyle="--", color="gray")
+    elif A_0 is not None:
+        ax.axhline(y=A_0, linestyle="--", color="gray")
+
+
+    ax.set_xlabel("Step")
+    ax.set_ylabel(metrics.capitalize())
+    # ax.legend()
+    
 

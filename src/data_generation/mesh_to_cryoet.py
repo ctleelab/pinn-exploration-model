@@ -21,7 +21,7 @@ def load_membrane_mesh(input_file):
     data = Dataset(input_file, 'r')
 
     # Extract the last frame of coordinates
-    coordinates = data.groups['Trajectory'].variables['coordinates'][-1]  
+    coordinates = data.groups['Trajectory'].variables['coordinates'][-1]
     coords = coordinates.reshape(-1, 3)  # Convert to (N,3)
 
     # Extract topology (assuming it defines triangular faces)
@@ -138,6 +138,7 @@ def plot_single_slice(pseudo_cryoET, axis='z', slice_index=None):
         raise ValueError("axis must be 'x', 'y', or 'z'.")
 
     grid_size = pseudo_cryoET.shape  # (Nx, Ny, Nz)
+    # pseudo_cryoET = np.where(pseudo_cryoET > 0.8, 1, 0)
 
     if axis == 'x':
         max_index = grid_size[0]

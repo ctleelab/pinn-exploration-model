@@ -224,20 +224,37 @@ def visualize_cryoET_with_contours(ax, step, checkpoint, cryoET_data, grid_size=
 
 
 
-def visualize_physics_loss(ax, step, checkpoint, epsilon, component, grid_size=64, slice_index=32, axis="z", vmin=None, vmax=None, colorbar=True):
+def visualize_physics_loss(
+    ax, 
+    epsilon, 
+    component, 
+    grid_size=64, 
+    slice_index=32, 
+    axis="z", 
+    vmin=None, 
+    vmax=None, 
+    colorbar=True,
+    checkpoint=None,
+    phi_fn=None,
+    step=None,
+    title=None,
+    ):
     """
     Visualize the residual of the Allen-Cahn PDE:
     Δφ - (1/ε²)(φ² - 1)φ on a 2D slice from the 3D domain.
     """
-    valid_components = ["residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz"]
+    assert (checkpoint is not None) or (phi_fn is not None), "Must provide either a checkpoint or an analytical phi_fn."
+
+    valid_components = ["phi", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2"]
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
 
-    state = checkpoint["state"]
-    params = state["params"]
-
-    model = PINN()
-    phi_fn = lambda x: model.apply(params, x)
+    # Restore phi_fn from checkpoint if needed
+    if checkpoint is not None:
+        state = checkpoint["state"]
+        params = state["params"]
+        model = PINN()
+        phi_fn = lambda x: model.apply(params, x)
 
     x = jnp.linspace(-1, 1, grid_size)
     y = jnp.linspace(-1, 1, grid_size)
@@ -254,7 +271,9 @@ def visualize_physics_loss(ax, step, checkpoint, epsilon, component, grid_size=6
     gradient = grad_phi(phi_fn, grid_points)
     hessian  = hessian_phi(phi_fn, grid_points)
 
-    if component == "residual":
+    if component == "phi":
+        values = phi_vals
+    elif component == "residual":
         values = residual
     elif component == "laplacian":
         values = lap_phi
@@ -272,10 +291,12 @@ def visualize_physics_loss(ax, step, checkpoint, epsilon, component, grid_size=6
         values = hessian[:, 1, 1]
     elif component == "hess_zz":
         values = hessian[:, 2, 2]
-
+    elif component == "grad_norm2":
+        values = jnp.sum(gradient ** 2, axis=1)
 
     # values = values**2
-    values = jnp.abs(values)
+    if component is not "phi":
+        values = jnp.abs(values)
     values = values.reshape(grid_size, grid_size, grid_size)
 
     if axis == "z":
@@ -316,7 +337,12 @@ def visualize_physics_loss(ax, step, checkpoint, epsilon, component, grid_size=6
     ax.set_yticks(tick_positions)
     ax.set_yticklabels(voxel_labels)
 
-    ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+
+    if title is not None:
+        ax.set_title(title)
+    if step is not None:
+        ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+
 
     return img
 
@@ -574,6 +600,9 @@ def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V
 
     ax.set_xlabel("Step")
     ax.set_ylabel(metrics.capitalize())
+    ax.set_yscale('log')
+    ax.set_ylim(1e-1, 1e4)
+
     # ax.legend()
     
 

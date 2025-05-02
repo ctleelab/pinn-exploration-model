@@ -21,7 +21,18 @@ class TrainState(train_state.TrainState):
     A_0: 		 float
 
 
-def create_train_state(key, learning_rate=1e-3, lambda_phys=1, lambda_volm=1, lambda_surf=1, lambda_cent=1, epsilon=0.05, V_0=0.5, A_0=3.1, sdf_pretrain=True):
+def create_train_state(
+    key, 
+    learning_rate=1e-3, 
+    lambda_phys=1, 
+    lambda_volm=1, 
+    lambda_surf=1, 
+    lambda_cent=1, 
+    epsilon=0.05, 
+    V_0=0.5, 
+    A_0=3.1, 
+    sdf_pretrain=True,
+    checkpoint=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
@@ -39,6 +50,14 @@ def create_train_state(key, learning_rate=1e-3, lambda_phys=1, lambda_volm=1, la
         y_train = sdf_initial.ravel()[train_idx]
 
         params = initialize_network_with_sdf(model, params, y_train, x_train)
+
+    # Use pretrained network structure as initial condition
+    if checkpoint is not None:
+        print("Use pretrained data as initial condition...")
+        params = checkpoint["params"]
+        # state = checkpoint["state"]
+        # params = state["params"]
+
 
     return TrainState(
         step=0,
@@ -204,7 +223,7 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
     if id == 0:     # Plot Physics Loss
         ax.plot(assembled_loss["step"], phys_loss_norm, marker='o', linestyle='-')
         ax.set_yscale('log')
-        ax.set_title("Normalized Data Loss")
+        ax.set_title("Normalized Physics Loss")
         ax.set_xlabel("Training Steps")
         ax.set_ylabel("Loss Value (scaled)")
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)

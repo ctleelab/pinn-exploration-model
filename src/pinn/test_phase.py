@@ -333,7 +333,8 @@ def train_neural_network(
     learning_rate=1e-3, 
     num_steps=7000, 
     log_interval=100, 
-    ckpt_dir="../outputs/logs/test_phase", 
+    ckpt_dir="../outputs/logs/test_phase",
+    restart_dir=None,
     alpha=0.01,
     beta=0.001,
     switch_first=2000,
@@ -345,9 +346,27 @@ def train_neural_network(
     """
     model = PINN()
     key = jax.random.PRNGKey(0)
+
+    # Initialize model
     params = model.init(key, jnp.ones((1, 3)))
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(params)
+
+
+    start_step = 0
+
+    # Load from checkpoint if provided
+    if restart_dir is not None:
+        restart_dir = os.path.abspath(restart_dir)
+        restored = checkpoints.restore_checkpoint(ckpt_dir=restart_dir, target={"params": params, "opt_state": opt_state, "step": 0})
+        if restored is not None:
+            params = restored["params"]
+            opt_state = restored["opt_state"]
+            start_step = restored["step"]
+            print(f"Starting from step {start_step}.")
+        else:
+            print(f"Warning: No checkpoint found in {restart_dir}. Starting from scratch.")
+
 
     x_train, y_train = generate_phi_dataset_random_sample(num_points=50000)
     true_grad = jax.vmap(jax.grad(analytic_phi_fn))(x_train)  # shape [N, 3]
@@ -397,7 +416,7 @@ def train_neural_network(
     os.makedirs(ckpt_dir, exist_ok=True)
     ckpt_manager = create_checkpoint_manager(ckpt_dir, max_to_keep=50)
 
-    for step in trange(1, num_steps + 1):
+    for step in trange(start_step, start_step + num_steps + 1):
 
         if step < switch_first:
             loss = loss_fn
@@ -441,7 +460,7 @@ def train_neural_network(
             )
             ckpt_manager.save(step, state)
 
-            print(f"Step {step}/{num_steps}, Loss: {loss_tot:.6f}, Volume: {vol_val:.4f}, Area: {area_val:.4f}")
+            print(f"Step {step}/{start_step+num_steps}, Loss: {loss_tot:.6f}, Volume: {vol_val:.4f}, Area: {area_val:.4f}")
 
     # Final state
     final_state = TrainState(

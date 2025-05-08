@@ -28,7 +28,7 @@ class PINN(nn.Module):
 
         x = nn.tanh(x)
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
-        # x = nn.relu(x)
+        x = nn.tanh(x)
         return x.squeeze()
 
 

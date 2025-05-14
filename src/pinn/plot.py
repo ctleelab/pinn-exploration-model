@@ -600,8 +600,8 @@ def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V
 
     ax.set_xlabel("Step")
     ax.set_ylabel(metrics.capitalize())
-    ax.set_yscale('log')
-    ax.set_ylim(1e-1, 1e4)
+    # ax.set_yscale('log')
+    # ax.set_ylim(1e-1, 1e1)
 
     # ax.legend()
     

@@ -32,7 +32,7 @@ def create_train_state(
     V_0=0.5, 
     A_0=3.1, 
     sdf_pretrain=True,
-    checkpoint=None):
+    init_ckpt=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
@@ -52,10 +52,10 @@ def create_train_state(
         params = initialize_network_with_sdf(model, params, y_train, x_train)
 
     # Use pretrained network structure as initial condition
-    if checkpoint is not None:
+    if init_ckpt is not None:
         print("Use pretrained data as initial condition...")
-        params = checkpoint["params"]
-        # state = checkpoint["state"]
+        params = init_ckpt["params"]
+        # state = init_ckpt["state"]
         # params = state["params"]
 
 

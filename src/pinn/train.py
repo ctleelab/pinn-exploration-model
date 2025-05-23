@@ -29,7 +29,13 @@ class TrainState(train_state.TrainState):
 #     ), model
 
 
-def create_train_state(key, learning_rate=1e-3, lambda_1=100000.0, lambda_2=0.001, sdf_pretrain=False):
+def create_train_state(
+    key, 
+    learning_rate=1e-3, 
+    lambda_1=100000.0, 
+    lambda_2=0.001, 
+    sdf_pretrain=False,
+    init_ckpt=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
@@ -46,6 +52,11 @@ def create_train_state(key, learning_rate=1e-3, lambda_1=100000.0, lambda_2=0.00
         y_train = sdf_initial.ravel()[train_idx]
 
         params = initialize_network_with_sdf(model, params, y_train, x_train)
+
+    # Use pretrained network structure as initial condition
+    if init_ckpt is not None:
+        print("Use pretrained data as initial condition...")
+        params = init_ckpt["params"]
 
 
     return TrainState(

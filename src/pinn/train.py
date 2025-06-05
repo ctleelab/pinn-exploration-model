@@ -57,6 +57,7 @@ def create_train_state(
     if init_ckpt is not None:
         print("Use pretrained data as initial condition...")
         params = init_ckpt["params"]
+        # params = init_ckpt['state']['params']
 
 
     return TrainState(
@@ -96,19 +97,19 @@ def generate_sdf(grid_size=64, radius=0.5):
 
     # Compute SDF for a sphere (normalized)
     sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
+    sdf_values = -jnp.tanh(sdf_values)
     # sdf_values = jnp.abs(sdf_values)
     # sdf_values = -sdf_values
 
     # Flatten grid points for training
     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
-    # sdf_values = sdf_values.ravel()  # Flatten the SDF values
-    sdf_values = -sdf_values.ravel()  # Flatten the SDF values
+    sdf_values = sdf_values.ravel()  # Flatten the SDF values
 
     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
 
 
 
-def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning_rate=1e-3, steps=500):
+def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning_rate=1e-3, steps=5000):
     """Optimize initial weights so that the PINN approximates the given SDF before training."""
     optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(params)
@@ -134,8 +135,8 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
         if step % 20 == 0:
             # print(f"Pre-training Step {step}, Loss: {loss_val:.6f}")
             predictions = model.apply(params, grid_points)
-            print(f"Pre-training Step {step}, Loss: {loss_val:.6f}, "
-              f"Pred min: {predictions.min():.6f}, Pred max: {predictions.max():.6f}")
+            # print(f"Pre-training Step {step}, Loss: {loss_val:.6f}, "
+              # f"Pred min: {predictions.min():.6f}, Pred max: {predictions.max():.6f}")
 
     return params
 
@@ -143,14 +144,18 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
 
 # Training step function
 @jit
-def train_step(state, x_train, cryoET_data):
+# def train_step(state, x_train, cryoET_data):
+def train_step(state, x_train, cryoET_data, membrane_indices):
     """ Performs one training step, computing gradients and updating parameters. """
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        loss_data_val = loss_data(phi_fn, cryoET_data)
+        # loss_data_val = loss_data(phi_fn, cryoET_data)
+        loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
         loss_physics_val = loss_physics(phi_fn, x_train)
-        total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
+        # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
+        # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
+        total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val
         return total_loss_val, (loss_data_val, loss_physics_val)
 
     (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)

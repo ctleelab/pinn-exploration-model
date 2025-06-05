@@ -19,8 +19,8 @@ class PINN(nn.Module):
             raise ValueError(f"Expected input shape (*,3), but got {x.shape}")
 
         # Apply positional encoding
-        x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
-        # x_encoded = x
+        # x_encoded = positional_encoding(x, num_frequencies=self.num_frequencies)
+        x_encoded = x
 
         x = nn.Dense(self.hidden_dim)(x_encoded)
         x = nn.tanh(x)
@@ -129,7 +129,9 @@ def gaussian_curvature(phi_fn, x):
 # Data fidelity loss (ensures φ(x,y,z) aligns with cryo-ET data)
 # def loss_data(phi_fn, x, cryoET_data):
     # return jnp.mean((phi_fn(x.reshape(-1, 3)) - cryoET_data) ** 2)
-def loss_data(phi_fn, cryoET_data):
+
+# def loss_data(phi_fn, cryoET_data):
+def loss_data(phi_fn, cryoET_data, membrane_indices):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
@@ -164,6 +166,40 @@ def loss_data(phi_fn, cryoET_data):
     inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
     outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
     membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
+
+    # # case 2
+    # outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
+    # membrane_loss = outside_loss
+
+    # # case 3 (too slow)
+    # # new data loss function based on gradient
+    # gradient = grad_phi(phi_fn, grid_points)
+    # grad_sqr = jnp.sum(gradient ** 2, axis=1).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE)
+    # membrane_loss = jnp.mean(
+    #     ((1 - binary_mask) * grad_sqr)       # penalize phi ≠ 0 where mask = 0
+    # # )
+
+    # # case 3.5
+    # total_points = grid_points.shape[0]
+    # num_samples = 1000
+    # rng_key = jax.random.PRNGKey(1234)
+    # sample_indices = jax.random.choice(rng_key, total_points, shape=(num_samples,), replace=False)
+    # sampled_points = grid_points[sample_indices]  # (num_samples, 3)
+    # gradient = grad_phi(phi_fn, sampled_points)   # (num_samples, 3)
+    # grad_sqr = jnp.sum(gradient ** 2, axis=1)     # (num_samples,)
+    # sampled_mask = binary_mask.ravel()[sample_indices]
+    # membrane_loss = jnp.mean(
+    #     ((1 - sampled_mask) * grad_sqr)       # penalize phi ≠ 0 where mask = 0
+    # )
+
+    # # case 4
+    # # membrane_indices = jnp.where(binary_mask.ravel() == 1)[0]
+    # points_membrane = grid_points[membrane_indices]  # shape: (N_membrane, 3)
+    # gradient = grad_phi(phi_fn, points_membrane)     # shape (N_membrane, 3)
+    # grad_mag = jnp.linalg.norm(gradient, axis=1)     # shape (N_membrane,)
+    # epsilon = 0.05
+    # target = 1.0 / epsilon
+    # membrane_loss = jnp.mean((grad_mag - target)**2)
 
     return membrane_loss
 
@@ -221,8 +257,10 @@ def loss_physics(phi_fn, x, epsilon = 0.05):
 
 
 # Combined loss function
-def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
-    return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
+# def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
+def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
+    # return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
+    return lambda_1 * loss_data(phi_fn, cryoET_data, membrane_indices) + lambda_2 * loss_physics(phi_fn, x)
 
 
 

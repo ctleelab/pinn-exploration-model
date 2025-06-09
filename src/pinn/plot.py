@@ -7,6 +7,7 @@ from pinn.model import PINN, laplacian_phi, grad_phi, hessian_phi
 from skimage.measure import marching_cubes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pinn.model import phase_volume, phase_surface
+from matplotlib.colors import LinearSegmentedColormap
 
 def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
     """
@@ -148,7 +149,16 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
 
 
 
-def visualize_cryoET_with_contours(ax, step, checkpoint, cryoET_data, grid_size=64, slice_index=32, axis="z"):
+def visualize_cryoET_with_contours(
+    ax, 
+    step, 
+    checkpoint, 
+    cryoET_data, 
+    grid_size=64, 
+    slice_index=32, 
+    axis="z", 
+    no_label=False,
+    ):
     """
     Overlay extracted φ=0 contours on the original CryoET grayscale image.
 
@@ -195,32 +205,49 @@ def visualize_cryoET_with_contours(ax, step, checkpoint, cryoET_data, grid_size=
         contour_x, contour_y = Y[slice_index, :, :], Z[slice_index, :, :]
 
     # Plot CryoET grayscale image
-    # ax.imshow(cryoET_numpy, cmap='gray', origin='lower',
-              # extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
-
-    binary_mask = np.where(cryoET_numpy > 0.8, 1, 0)
-    ax.imshow(binary_mask, cmap='gray', origin='lower',
+    custom_gray = LinearSegmentedColormap.from_list(
+        'custom_gray', ['#f0f0f0', '#777777']  # light gray to dark gray
+    )
+    # ax.imshow(cryoET_numpy, cmap='gray_r', origin='lower',
+    ax.imshow(cryoET_numpy, cmap=custom_gray, origin='lower',
               extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
 
+    # binary_mask = np.where(cryoET_numpy > 0.8, 1, 0)
+    # ax.imshow(binary_mask, cmap='gray', origin='lower',
+    #           extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
+
     # Extract contour lines for φ=0 and overlay them
-    contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=1.5)
+    # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=1.5)
+    contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=2.0)
+    # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors=["#d0e3e9"], linewidths=1.5)
     # ax.clabel(contour, fmt="φ=0", colors='red')  # Label contour line
 
-    # Set axis labels
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
 
-    # Set tick positions and labels (Voxel-based)
-    tick_positions = np.linspace(-1, 1, num=5)  # Normalized positions
-    tick_labels = np.linspace(0, grid_size - 1, num=5).astype(int)  # Voxel indices
+    if no_label is True:
+        ax.set_xticks([])        # Remove x-axis ticks
+        ax.set_yticks([])        # Remove y-axis ticks
+
+        ax.set_xticklabels([])   # Remove x-axis tick labels (numbers)
+        ax.set_yticklabels([])   # Remove y-axis tick labels (numbers)
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)  # Remove border box
+    else:
+        # Set axis labels
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        # Set tick positions and labels (Voxel-based)
+        tick_positions = np.linspace(-1, 1, num=5)  # Normalized positions
+        tick_labels = np.linspace(0, grid_size - 1, num=5).astype(int)  # Voxel indices
 
 
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels)
-    ax.set_yticks(tick_positions)
-    ax.set_yticklabels(tick_labels)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels)
+        ax.set_yticks(tick_positions)
+        ax.set_yticklabels(tick_labels)
 
-    ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+        ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
 
 
 
@@ -238,6 +265,7 @@ def visualize_physics_loss(
     phi_fn=None,
     step=None,
     title=None,
+    no_label=False,
     ):
     """
     Visualize the residual of the Allen-Cahn PDE:
@@ -294,7 +322,6 @@ def visualize_physics_loss(
     elif component == "grad_norm2":
         values = jnp.sum(gradient ** 2, axis=1)
 
-    # values = values**2
     if component is not "phi":
         values = jnp.abs(values)
     values = values.reshape(grid_size, grid_size, grid_size)
@@ -322,20 +349,30 @@ def visualize_physics_loss(
                     extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()],
                     vmin=vmin, vmax=vmax, alpha=1.0)
 
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
+    if no_label is True:
+        ax.set_xticks([])        # Remove x-axis ticks
+        ax.set_yticks([])        # Remove y-axis ticks
 
-    if colorbar is True:
-        cbar = plt.colorbar(img, ax=ax, shrink=0.6)
-        # cbar.set_label("Residual value")        
+        ax.set_xticklabels([])   # Remove x-axis tick labels (numbers)
+        ax.set_yticklabels([])   # Remove y-axis tick labels (numbers)
 
-    tick_positions = np.linspace(-1, 1, num=5)
-    voxel_labels = np.linspace(0, grid_size - 1, num=5).astype(int)
+        for spine in ax.spines.values():
+            spine.set_visible(False)  # Remove border box
+    else:
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
 
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(voxel_labels)
-    ax.set_yticks(tick_positions)
-    ax.set_yticklabels(voxel_labels)
+        if colorbar is True:
+            cbar = plt.colorbar(img, ax=ax, shrink=0.6)
+            # cbar.set_label("Residual value")        
+
+        tick_positions = np.linspace(-1, 1, num=5)
+        voxel_labels = np.linspace(0, grid_size - 1, num=5).astype(int)
+
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(voxel_labels)
+        ax.set_yticks(tick_positions)
+        ax.set_yticklabels(voxel_labels)
 
 
     if title is not None:
@@ -351,7 +388,7 @@ def visualize_physics_loss(
 
 
 
-def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
+def plot_3d_isosurface(ax, step, checkpoint, grid_size=64, no_label=False):
     """
     Load a checkpoint, compute φ values, extract the isosurface, and plot it.
 
@@ -389,6 +426,7 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
 
     # Add the surface mesh with improved appearance
     mesh = Poly3DCollection(verts[faces], alpha=0.1, edgecolor="k", linewidth=0.2, facecolor="cyan")
+    # mesh = Poly3DCollection(verts[faces], alpha=0.1, edgecolor="k", linewidth=0.2, facecolor=["#d0e3e9"])
     ax.add_collection3d(mesh)
 
     # Improve visualization by adding a wireframe effect
@@ -403,15 +441,44 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64):
     # ax.set_yticks([])
     # ax.set_zticks([])
 
-    # ax.set_title(f"Step {step}", fontsize=12)
-    ax.set_title(f"Step {step}", fontsize=12, y=0.9)
 
+    if no_label is True:
+        ax.set_xticks([])        # Remove x-axis ticks
+        ax.set_yticks([])        # Remove y-axis ticks
+        ax.set_zticks([])        # Remove y-axis ticks
 
-    # Adjust camera angle & axis limits
-    ax.view_init(elev=30, azim=45)  # Adjust view angle
-    ax.set_xlim(-1, 1)
-    ax.set_ylim(-1, 1)
-    ax.set_zlim(-1, 1)
+        ax.set_xticklabels([])   # Remove x-axis tick labels (numbers)
+        ax.set_yticklabels([])   # Remove y-axis tick labels (numbers)
+        ax.set_zticklabels([])   # Remove y-axis tick labels (numbers)
+
+        # Make axis lines and panes transparent
+        ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+        ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+        ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+
+        ax.xaxis._axinfo['grid']['color'] = (1, 1, 1, 0)
+        ax.yaxis._axinfo['grid']['color'] = (1, 1, 1, 0)
+        ax.zaxis._axinfo['grid']['color'] = (1, 1, 1, 0)
+
+        ax.xaxis.line.set_color((1, 1, 1, 0))
+        ax.yaxis.line.set_color((1, 1, 1, 0))
+        ax.zaxis.line.set_color((1, 1, 1, 0))
+
+        # Adjust camera angle & axis limits
+        limit_val = 0.6
+        ax.set_xlim(-limit_val, limit_val)
+        ax.set_ylim(-limit_val, limit_val)
+        # ax.set_zlim(-limit_val, limit_val)
+        ax.set_zlim(-0.5, 0.5)
+
+    else:
+        ax.set_title(f"Step {step}", fontsize=12, y=0.9)
+
+        # Adjust camera angle & axis limits
+        ax.view_init(elev=30, azim=45)  # Adjust view angle
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        ax.set_zlim(-1, 1)
 
     # Improve aesthetics
     ax.grid(False)  # Hide the default grid
@@ -538,8 +605,9 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
     if id == 0:     # Plot Data Loss
         ax.plot(assembled_loss["step"], data_loss_norm, marker='o', linestyle='-')
         ax.set_yscale('log')
-        ax.set_title("Normalized Data Loss")
+        ax.set_title("Normalized Data Loss", )
         ax.set_xlabel("Training Steps")
+        # ax.set_xlabel("Steps")
         ax.set_ylabel("Loss Value (scaled)")
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
@@ -548,6 +616,7 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.set_yscale('log')
         ax.set_title("Normalized Physics Loss")
         ax.set_xlabel("Training Steps")
+        # ax.set_xlabel("Steps")
         ax.set_ylabel("Loss Value (scaled)")        
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
@@ -556,6 +625,7 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.set_yscale('log')
         ax.set_title("Normalized Total Loss")
         ax.set_xlabel("Training Steps")
+        # ax.set_xlabel("Steps")
         ax.set_ylabel("Loss Value (scaled)")
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 

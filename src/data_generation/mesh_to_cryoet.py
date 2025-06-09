@@ -5,6 +5,7 @@ from netCDF4 import Dataset
 from pathlib import Path
 import mrcfile
 import trimesh
+from matplotlib.colors import LinearSegmentedColormap
 
 def load_membrane_mesh(input_file):
     """
@@ -70,6 +71,31 @@ def generate_voxel_grid(mesh, coords, grid_size=128, margin_ratio=0.4):
 
     return volume
 
+def add_random_missing_data(volume, missing_ratio=0.3, seed=None):
+    """
+    Randomly remove a portion of the voxel data to simulate missing regions.
+    
+    Args:
+        volume (np.ndarray): The original voxel grid.
+        missing_ratio (float): Fraction of non-zero voxels to set to zero.
+        seed (int or None): Random seed for reproducibility.
+        
+    Returns:
+        np.ndarray: Voxel grid with missing data.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+        
+    volume_missing = volume.copy()
+    membrane_voxels = np.argwhere(volume == 1)
+    num_to_remove = int(len(membrane_voxels) * missing_ratio)
+    
+    indices_to_remove = membrane_voxels[np.random.choice(len(membrane_voxels), num_to_remove, replace=False)]
+    for idx in indices_to_remove:
+        volume_missing[tuple(idx)] = 0
+    
+    return volume_missing
+
 
 def apply_distance_transform(volume, max_distance=10):
     """
@@ -91,7 +117,7 @@ def apply_distance_transform(volume, max_distance=10):
     return np.exp(-distance_map / 3)  # Simulate electron attenuation
 
 
-def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0):
+def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0, missing_ratio=None):
     """
     Full pipeline to generate pseudo cryo-ET data from a membrane mesh.
 
@@ -110,6 +136,8 @@ def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0):
 
     mesh, coords = load_membrane_mesh(input_file)
     voxel_grid = generate_voxel_grid(mesh, coords, grid_size)
+    if missing_ratio is not None:
+        voxel_grid = add_random_missing_data(voxel_grid, missing_ratio=missing_ratio)
     pseudo_cryoET = apply_distance_transform(voxel_grid)
 
     # Apply Gaussian blur for realistic effect (sigma is now user-defined)
@@ -124,7 +152,7 @@ def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0):
     return pseudo_cryoET
 
 
-def plot_single_slice(pseudo_cryoET, axis='z', slice_index=None):
+def plot_single_slice(pseudo_cryoET, axis='z', slice_index=None, thre=None):
     """
     Plots a 2D slice of the generated pseudo cryo-ET data.
 
@@ -138,7 +166,8 @@ def plot_single_slice(pseudo_cryoET, axis='z', slice_index=None):
         raise ValueError("axis must be 'x', 'y', or 'z'.")
 
     grid_size = pseudo_cryoET.shape  # (Nx, Ny, Nz)
-    # pseudo_cryoET = np.where(pseudo_cryoET > 0.8, 1, 0)
+    if thre is not None:
+        pseudo_cryoET = np.where(pseudo_cryoET > thre, 1, 0)
 
     if axis == 'x':
         max_index = grid_size[0]
@@ -160,7 +189,7 @@ def plot_single_slice(pseudo_cryoET, axis='z', slice_index=None):
 
 
 
-def plot_multiple_slices(volume, axis='z', num_slices=5):
+def plot_multiple_slices(volume, axis='z', num_slices=5, thre=None):
     """
     Visualizes multiple slices of a 3D volume along the chosen axis.
 
@@ -171,6 +200,9 @@ def plot_multiple_slices(volume, axis='z', num_slices=5):
     """
     if axis not in ('x', 'y', 'z'):
         raise ValueError("Axis must be 'x', 'y', or 'z'.")
+
+    if thre is not None:
+        volume = np.where(volume > thre, 1, 0)
 
     # Get the dimension size for the chosen axis
     dim_size = volume.shape[{'x': 0, 'y': 1, 'z': 2}[axis]]
@@ -189,7 +221,13 @@ def plot_multiple_slices(volume, axis='z', num_slices=5):
         else:  # Default is Z-axis
             img = volume[:, :, idx]  # Slice along Z-axis (XY plane)
 
-        axes[i].imshow(img, cmap='gray')
+        custom_gray = LinearSegmentedColormap.from_list(
+            'custom_gray', ['#f0f0f0', '#111111']  # light gray to dark gray
+        )
+
+        # axes[i].imshow(img, cmap='gray')
+        # axes[i].imshow(img, cmap='gray_r')
+        axes[i].imshow(img, cmap=custom_gray)
         axes[i].set_title(f"{axis.upper()}={idx}/{dim_size}")
         axes[i].axis('off')
 

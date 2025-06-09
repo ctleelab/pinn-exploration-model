@@ -151,7 +151,8 @@ def loss_data(phi_fn, cryoET_data, membrane_indices):
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
 
-    binary_mask = jnp.where(cryoET_data > 0.8, 1, 0)
+    binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
+    # binary_mask = jnp.where(cryoET_data > 0.82, 1, 0)
     # binary_mask = cryoET_data
 
     # membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)

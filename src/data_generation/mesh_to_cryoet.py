@@ -97,6 +97,33 @@ def add_random_missing_data(volume, missing_ratio=0.3, seed=None):
     return volume_missing
 
 
+def add_random_noise(volume, flip_ratio=0.05, seed=None):
+    """
+    Randomly flip voxel values (0 to 1, or 1 to 0) to simulate noise.
+    
+    Args:
+        volume (np.ndarray): The original voxel grid.
+        flip_ratio (float): Fraction of voxels to flip.
+        seed (int or None): Random seed for reproducibility.
+        
+    Returns:
+        np.ndarray: Voxel grid with added noise.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+        
+    volume_noisy = volume.copy()
+    all_voxel_indices = np.argwhere(np.ones_like(volume))  # All indices
+    num_to_flip = int(len(all_voxel_indices) * flip_ratio)
+    
+    indices_to_flip = all_voxel_indices[np.random.choice(len(all_voxel_indices), num_to_flip, replace=False)]
+    for idx in indices_to_flip:
+        volume_noisy[tuple(idx)] = 1 - volume_noisy[tuple(idx)]  # Flip 0 <-> 1
+    
+    return volume_noisy
+
+
+
 def apply_distance_transform(volume, max_distance=10):
     """
     Applies a distance transform to the voxel grid to simulate density.
@@ -117,7 +144,7 @@ def apply_distance_transform(volume, max_distance=10):
     return np.exp(-distance_map / 3)  # Simulate electron attenuation
 
 
-def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0, missing_ratio=None):
+def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0, missing_ratio=None, flip_ratio=None):
     """
     Full pipeline to generate pseudo cryo-ET data from a membrane mesh.
 
@@ -138,6 +165,9 @@ def generate_pseudo_cryoet(input_file, output_file, grid_size=128, sigma=1.0, mi
     voxel_grid = generate_voxel_grid(mesh, coords, grid_size)
     if missing_ratio is not None:
         voxel_grid = add_random_missing_data(voxel_grid, missing_ratio=missing_ratio)
+    if flip_ratio is not None:
+        voxel_grid = add_random_noise(voxel_grid, flip_ratio=flip_ratio)
+
     pseudo_cryoET = apply_distance_transform(voxel_grid)
 
     # Apply Gaussian blur for realistic effect (sigma is now user-defined)

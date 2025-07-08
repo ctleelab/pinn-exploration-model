@@ -84,7 +84,7 @@ def create_train_state(
 #     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
 
 
-def generate_sdf(grid_size=64, radius=0.5):
+def generate_sdf(grid_size=64, radius=0.5, epsilon=0.05):
     """Generate a signed distance function (SDF) for a sphere of given radius."""
 
     # Define voxel-based coordinate grid
@@ -97,7 +97,8 @@ def generate_sdf(grid_size=64, radius=0.5):
 
     # Compute SDF for a sphere (normalized)
     sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
-    sdf_values = -jnp.tanh(sdf_values)
+    # sdf_values = -jnp.tanh(sdf_values)
+    sdf_values = -jnp.tanh(sdf_values/epsilon)
     # sdf_values = jnp.abs(sdf_values)
     # sdf_values = -sdf_values
 

@@ -42,7 +42,7 @@ def create_train_state(
     if sdf_pretrain:
         print("Pretraining the network using SDF...")
         grid_points, sdf_initial = generate_sdf()
-        sdf_initial = -sdf_initial
+        # sdf_initial = -sdf_initial
 
         # Select random training points
         train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)

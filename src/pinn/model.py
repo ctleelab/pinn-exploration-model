@@ -163,7 +163,8 @@ def loss_data(phi_fn, cryoET_data, membrane_indices):
     #     ((1 - binary_mask) * (phi ** 2 - 1.0) ** 2)       # penalize phi ≠ ±1 where mask = 0
     # )
 
-    weight_in = 0.95
+    # weight_in = 0.95
+    weight_in = 0.8
     inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
     outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
     membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss

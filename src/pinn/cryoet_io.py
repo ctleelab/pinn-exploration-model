@@ -80,7 +80,7 @@ def load_mrc_data(file_path, grid_size=64):
     
     Args:
         file_path (str): Path to the MRC file.
-        grid_size (int): Size of the grid (rescaling if needed).
+        grid_size (int or tuple of 3 ints): Output size (uniform or (Z, Y, X)).
         
     Returns:
         jnp.ndarray: Normalized 3D cryo-ET data.
@@ -91,12 +91,21 @@ def load_mrc_data(file_path, grid_size=64):
     # Normalize intensity to [0,1]
     mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
 
-    # Ensure the data shape matches the expected grid size
-    if mrc_data.shape != (grid_size, grid_size, grid_size):
-        print(f"Resizing MRC data from {mrc_data.shape} to ({grid_size}, {grid_size}, {grid_size})")
+    # Determine target shape
+    if isinstance(grid_size, int):
+        target_shape = (grid_size, grid_size, grid_size)
+    elif isinstance(grid_size, tuple) and len(grid_size) == 3:
+        target_shape = grid_size
+    else:
+        raise ValueError("grid_size must be either an int or a tuple of 3 integers.")
+
+    # Resize if needed
+    if mrc_data.shape != target_shape:
+        print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
         from skimage.transform import resize
-        mrc_data = resize(mrc_data, (grid_size, grid_size, grid_size), mode='reflect', anti_aliasing=True)
-        mrc_data = jnp.array(mrc_data)  # Convert back to JAX array
+        mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
+        mrc_data = jnp.array(mrc_data)
 
     return mrc_data
+
 

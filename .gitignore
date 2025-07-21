@@ -18,5 +18,6 @@ logs/
 *.log
 
 # Ignore large data files (optional)
+data/
 # data/raw/
 # data/synthetic/

@@ -158,6 +158,7 @@ def visualize_cryoET_with_contours(
     slice_index=32, 
     axis="z", 
     no_label=False,
+    thresholding=False,
     ):
     """
     Overlay extracted φ=0 contours on the original CryoET grayscale image.
@@ -183,6 +184,9 @@ def visualize_cryoET_with_contours(
 
     # Compute φ values
     phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
+
+    if thresholding is True:
+        cryoET_data = jnp.where(cryoET_data > 0.8, 1.0, 0.0)
 
     # Extract the CryoET grayscale image at the selected slice
     if axis == "z":
@@ -637,7 +641,11 @@ def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V
     z = jnp.linspace(-1, 1, grid_size)
 
     X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
-    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+    # grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+    key = jax.random.PRNGKey(0)
+    num_collocation = 1000
+    grid_points = (jax.random.uniform(key, (num_collocation, 3), minval=-1, maxval=1)) # Sampled from [-1, 1]^3
 
     assembled_data = {"step": [], "value": []}
 

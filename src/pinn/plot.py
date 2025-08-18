@@ -270,6 +270,8 @@ def visualize_physics_loss(
     step=None,
     title=None,
     no_label=False,
+    cryoET_data=None,
+    threshold=0.8,
     ):
     """
     Visualize the residual of the Allen-Cahn PDE:
@@ -277,7 +279,7 @@ def visualize_physics_loss(
     """
     assert (checkpoint is not None) or (phi_fn is not None), "Must provide either a checkpoint or an analytical phi_fn."
 
-    valid_components = ["phi", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2"]
+    valid_components = ["phi", "data", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2"]
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
 
@@ -287,6 +289,13 @@ def visualize_physics_loss(
         params = state["params"]
         model = PINN()
         phi_fn = lambda x: model.apply(params, x)
+
+    if cryoET_data is not None:
+        binary_mask = jnp.where(cryoET_data > threshold, 1.0, 0.0)
+        binary_mask = binary_mask.reshape(-1)
+        weight = 0.8
+        w_in  = weight / jnp.sum(binary_mask)
+        w_out = (1-weight) / jnp.sum(1 - binary_mask)
 
     x = jnp.linspace(-1, 1, grid_size)
     y = jnp.linspace(-1, 1, grid_size)
@@ -302,9 +311,15 @@ def visualize_physics_loss(
     residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
     gradient = grad_phi(phi_fn, grid_points)
     hessian  = hessian_phi(phi_fn, grid_points)
+    if cryoET_data is not None:
+        data_dot = w_in * binary_mask * phi_vals**2 + w_out * (1-binary_mask) * (phi_vals**2-1)**2
+        # print("max: ", data_dot.max())
+        # print("min: ", data_dot.min())
 
     if component == "phi":
         values = phi_vals
+    elif component == "data":
+        values = data_dot
     elif component == "residual":
         values = residual
     elif component == "laplacian":

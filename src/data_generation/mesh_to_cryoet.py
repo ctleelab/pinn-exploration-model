@@ -8,7 +8,7 @@ import trimesh
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.ndimage import label, generate_binary_structure
 
-def load_membrane_mesh(input_file):
+def load_membrane_mesh(input_file, frame=-1):
     """
     Load membrane coordinates and topology from a NetCDF file.
 
@@ -23,11 +23,11 @@ def load_membrane_mesh(input_file):
     data = Dataset(input_file, 'r')
 
     # Extract the last frame of coordinates
-    coordinates = data.groups['Trajectory'].variables['coordinates'][-1]
+    coordinates = data.groups['Trajectory'].variables['coordinates'][frame]
     coords = coordinates.reshape(-1, 3)  # Convert to (N,3)
 
     # Extract topology (assuming it defines triangular faces)
-    topology = data.groups['Trajectory'].variables['topology'][-1]  
+    topology = data.groups['Trajectory'].variables['topology'][frame]
     faces = np.array(topology).reshape(-1, 3)  # Convert to (M,3)
 
     return trimesh.Trimesh(vertices=coords, faces=faces), coords
@@ -194,6 +194,8 @@ def generate_pseudo_cryoet(
     flip_ratio=None,
     num_patch=None,
     rad_patch=None,
+    frame=-1,
+    margin_ratio=0.4,
     ):
     """
     Full pipeline to generate pseudo cryo-ET data from a membrane mesh.
@@ -213,8 +215,8 @@ def generate_pseudo_cryoet(
         output_file = Path(output_file)
         output_file.parent.mkdir(parents=True, exist_ok=True)  # Ensure output directory exists
 
-    mesh, coords = load_membrane_mesh(input_file)
-    voxel_grid = generate_voxel_grid(mesh, coords, grid_size)
+    mesh, coords = load_membrane_mesh(input_file, frame)
+    voxel_grid = generate_voxel_grid(mesh, coords, grid_size, margin_ratio=margin_ratio)
     if missing_ratio is not None:
         voxel_grid = add_random_missing_data(voxel_grid, missing_ratio=missing_ratio)
     if flip_ratio is not None:

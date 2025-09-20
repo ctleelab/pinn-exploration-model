@@ -29,22 +29,56 @@ class TrainState(train_state.TrainState):
 #     ), model
 
 
+import jax, jax.numpy as jnp
+import optax
+from flax.training import train_state
+from typing import Callable
+from dataclasses import dataclass
+
+def cosine_with_restarts(lr_max: float, lr_min: float, T0: int, T_mult: float=2.0) -> Callable[[int], float]:
+    """SGDR schedule: cosine decay that restarts; step is a Python int or jnp scalar."""
+    def schedule(step):
+        step = jnp.asarray(step, dtype=jnp.float32)
+        # compute which restart we're in and local step within it
+        # (closed-form version of SGDR)
+        # Find k s.t. step < T0 * (1 - T_mult**k) / (1 - T_mult)
+        # Use while_loop to avoid Python control flow.
+        def body_fun(carry):
+            k, acc, Tk = carry
+            return (k+1, acc + Tk, Tk*T_mult)
+        def cond_fun(carry):
+            k, acc, Tk = carry
+            return (acc + Tk) <= step
+        k0, acc0, Tk0 = jnp.int32(0), jnp.float32(0.0), jnp.float32(T0)
+        k, acc, Tk = jax.lax.while_loop(cond_fun, body_fun, (k0, acc0, Tk0))
+        # local position in current cycle
+        t_local = step - acc
+        cos = 0.5 * (1.0 + jnp.cos(jnp.pi * t_local / jnp.maximum(Tk, 1.0)))
+        return lr_min + (lr_max - lr_min) * cos
+    return schedule
+
+
+
 def create_train_state(
     key, 
     learning_rate=1e-3, 
     lambda_1=100000.0, 
     lambda_2=0.001, 
-    sdf_pretrain=False,
+    sdf_pretrain=None, # "sphere" or "plane"
     init_ckpt=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
-    optimizer = optax.adam(learning_rate)  # Adam optimizer
+    # optimizer = optax.adam(learning_rate)  # Adam optimizer
+
+    # Cosine Annealing Schedule
+    lr_sched = cosine_with_restarts(lr_max=5e-3, lr_min=1e-5, T0=1000, T_mult=1.0)
+    optimizer = optax.adam(learning_rate=lr_sched)  # Adam with scheduled LR
 
     # Perform SDF pretraining before training
-    if sdf_pretrain:
+    if sdf_pretrain is not None:
         print("Pretraining the network using SDF...")
-        grid_points, sdf_initial = generate_sdf()
+        grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain)
 
         # Select random training points
         train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
@@ -84,7 +118,7 @@ def create_train_state(
 #     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
 
 
-def generate_sdf(grid_size=64, radius=0.5, epsilon=0.05):
+def generate_sdf_ori(grid_size=64, radius=0.5, epsilon=0.05):
     """Generate a signed distance function (SDF) for a sphere of given radius."""
 
     # Define voxel-based coordinate grid
@@ -107,6 +141,42 @@ def generate_sdf(grid_size=64, radius=0.5, epsilon=0.05):
     sdf_values = sdf_values.ravel()  # Flatten the SDF values
 
     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
+
+
+
+def generate_sdf(
+    grid_size=64,
+    kind="plane",                  # "sphere" or "plane"
+    radius=0.5,                     # used for sphere
+    epsilon=0.05,                   # smoothing width for tanh
+):
+
+    # Coordinate grid in [-1, 1]^3
+    x, y, z = jnp.meshgrid(
+        jnp.linspace(-1, 1, grid_size),
+        jnp.linspace(-1, 1, grid_size),
+        jnp.linspace(-1, 1, grid_size),
+        indexing="ij"
+    )
+
+    if kind == "sphere":
+        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
+
+    elif kind == "plane":
+        sdf_values = x
+    else:
+        raise ValueError("kind must be 'sphere' or 'sheet'")
+
+    sdf_values = -jnp.tanh(sdf_values/epsilon)
+
+    # Flatten grid points for training
+    grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
+    sdf_values = sdf_values.ravel()  # Flatten the SDF values
+
+    return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
+
+
+
 
 
 

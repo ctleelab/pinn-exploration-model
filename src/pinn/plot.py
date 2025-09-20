@@ -279,7 +279,7 @@ def visualize_physics_loss(
     """
     assert (checkpoint is not None) or (phi_fn is not None), "Must provide either a checkpoint or an analytical phi_fn."
 
-    valid_components = ["phi", "data", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2"]
+    valid_components = ["phi", "data", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2", "tension"]
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
 
@@ -311,6 +311,8 @@ def visualize_physics_loss(
     residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
     gradient = grad_phi(phi_fn, grid_points)
     hessian  = hessian_phi(phi_fn, grid_points)
+    sq_grad  = jnp.sum(gradient**2, axis=1)
+    areadist = sq_grad + (0.5 / epsilon**2) * (phi_vals**2 - 1)**2
     if cryoET_data is not None:
         data_dot = w_in * binary_mask * phi_vals**2 + w_out * (1-binary_mask) * (phi_vals**2-1)**2
         # print("max: ", data_dot.max())
@@ -340,6 +342,8 @@ def visualize_physics_loss(
         values = hessian[:, 2, 2]
     elif component == "grad_norm2":
         values = jnp.sum(gradient ** 2, axis=1)
+    elif component == "tension":
+        values = areadist
 
     if component is not "phi":
         values = jnp.abs(values)

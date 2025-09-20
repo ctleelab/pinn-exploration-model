@@ -152,6 +152,7 @@ def loss_data(phi_fn, cryoET_data, membrane_indices):
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
 
     binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
+    # binary_mask = jnp.where(cryoET_data > 0.7, 1, 0) 
     # binary_mask = jnp.where(cryoET_data > 0.82, 1, 0)
     # binary_mask = cryoET_data
 
@@ -163,11 +164,19 @@ def loss_data(phi_fn, cryoET_data, membrane_indices):
     #     ((1 - binary_mask) * (phi ** 2 - 1.0) ** 2)       # penalize phi ≠ ±1 where mask = 0
     # )
 
-    # weight_in = 0.95
-    weight_in = 0.8
+    # weight_in = 0.8 # defalut
+    # inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
+    # outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
+    # membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
+
+    weight_in = 0.5
     inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
-    outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
+    outside_loss = jnp.sum((1 - binary_mask) * (1.0 - jnp.abs(phi)) ** 2) / jnp.sum(1 - binary_mask)
     membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
+
+    # inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2)
+    # outside_loss = jnp.sum((1 - binary_mask) * (1.0 - jnp.abs(phi)) ** 2)
+    # membrane_loss = (inside_loss + outside_loss) / jnp.size(binary_mask)
 
     # # case 2
     # outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
@@ -266,7 +275,7 @@ def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
 
 
 
-def phase_volume(phi_fn, x, V_box=8):
+def phase_volume(phi_fn, x, V_box=8): # volume
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     value = 1 + phi_vals
     volume = jnp.sum(value*0.5)
@@ -274,7 +283,7 @@ def phase_volume(phi_fn, x, V_box=8):
 
     return volume
 
-def phase_surface(phi_fn, x, epsilon, V_box=8):
+def phase_surface(phi_fn, x, epsilon, V_box=8): # surface area
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     grad_val = grad_phi(phi_fn, x)
     sq_grad = jnp.sum(grad_val ** 2, axis=1)
@@ -285,5 +294,16 @@ def phase_surface(phi_fn, x, epsilon, V_box=8):
     area *= V_box / x.shape[0]
     
     return area
+
+def phase_bend(phi_fn, x, epsilon, kappa, V_box=8): # bending energy
+    phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+    lap_phi = laplacian_phi(phi_fn, x)
+
+    value = epsilon*lap_phi - (1 / epsilon) * (phi_vals**2 - 1) * phi_vals
+    bend = jnp.sum(value**2)
+    bend *= 3*kappa/4/jnp.sqrt(2)/epsilon
+    bend *= V_box / x.shape[0]
+
+    return bend
 
 

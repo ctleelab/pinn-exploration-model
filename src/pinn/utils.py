@@ -1,8 +1,8 @@
 import numpy as np
 from pinn.model import loss_data, loss_physics, total_loss
 
-# def initial_loss(state, x_train, cryoET_data):
-def initial_loss(state, x_train, cryoET_data, membrane_indices):
+def initial_loss(state, x_train, cryoET_data):
+# def initial_loss(state, x_train, cryoET_data, membrane_indices):
     """
     Compute the actual initial loss values before training starts.
     Returns a structured dictionary compatible with checkpoint storage.
@@ -13,11 +13,11 @@ def initial_loss(state, x_train, cryoET_data, membrane_indices):
     phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
 
     # Compute the losses
-    # loss_data_val = loss_data(phi_fn, cryoET_data)
-    loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
+    loss_data_val = loss_data(phi_fn, cryoET_data)
+    # loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
     loss_physics_val = loss_physics(phi_fn, x_train)
-    # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
-    total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
+    total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
+    # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
 
     # Convert to structured format (single-step array)
     loss_log = {

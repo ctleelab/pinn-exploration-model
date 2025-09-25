@@ -130,8 +130,8 @@ def gaussian_curvature(phi_fn, x):
 # def loss_data(phi_fn, x, cryoET_data):
     # return jnp.mean((phi_fn(x.reshape(-1, 3)) - cryoET_data) ** 2)
 
-# def loss_data(phi_fn, cryoET_data):
-def loss_data(phi_fn, cryoET_data, membrane_indices):
+def loss_data(phi_fn, cryoET_data):
+# def loss_data(phi_fn, cryoET_data, membrane_indices):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
@@ -164,15 +164,16 @@ def loss_data(phi_fn, cryoET_data, membrane_indices):
     #     ((1 - binary_mask) * (phi ** 2 - 1.0) ** 2)       # penalize phi ≠ ±1 where mask = 0
     # )
 
-    # weight_in = 0.8 # defalut
-    # inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
-    # outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
-    # membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
-
-    weight_in = 0.5
+    weight_in = 0.8 # defalut
     inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
-    outside_loss = jnp.sum((1 - binary_mask) * (1.0 - jnp.abs(phi)) ** 2) / jnp.sum(1 - binary_mask)
+    outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
     membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
+
+    # weight_in = 0.5
+    # weight_in = 0.8
+    # inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
+    # outside_loss = jnp.sum((1 - binary_mask) * (1.0 - jnp.abs(phi)) ** 2) / jnp.sum(1 - binary_mask)
+    # membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
 
     # inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2)
     # outside_loss = jnp.sum((1 - binary_mask) * (1.0 - jnp.abs(phi)) ** 2)
@@ -268,10 +269,10 @@ def loss_physics(phi_fn, x, epsilon = 0.05):
 
 
 # Combined loss function
-# def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
-def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
-    # return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
-    return lambda_1 * loss_data(phi_fn, cryoET_data, membrane_indices) + lambda_2 * loss_physics(phi_fn, x)
+def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
+# def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
+    return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
+    # return lambda_1 * loss_data(phi_fn, cryoET_data, membrane_indices) + lambda_2 * loss_physics(phi_fn, x)
 
 
 

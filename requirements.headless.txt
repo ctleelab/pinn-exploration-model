@@ -182,9 +182,6 @@ Pygments==2.19.1
 PyOpenGL
 pyparsing==3.2.1
 pyproject_hooks
-PyQt5==5.15.11
-PyQt5_sip==12.17.0
-PySide2==5.15.15
 PySocks
 python-dateutil
 python-json-logger==3.3.0
@@ -192,8 +189,6 @@ pytz
 PyWavelets==1.9.0
 PyYAML
 pyzmq==26.2.1
-qtconsole
-QtPy
 referencing
 requests==2.32.3
 rfc3339-validator==0.1.4
@@ -205,7 +200,6 @@ scikit-image
 scipy
 Send2Trash==1.8.3
 shellingham
-shiboken2==5.15.15
 simplejson==3.19.3
 sip
 six
@@ -217,10 +211,8 @@ sphinxcontrib-applehelp
 sphinxcontrib-devhelp
 sphinxcontrib-htmlhelp
 sphinxcontrib-jsmath
-sphinxcontrib-qthelp
 sphinxcontrib-serializinghtml
 stack_data
-superqt
 tensorboard==2.20.0
 tensorboard-data-server==0.7.2
 tensorflow==2.20.0

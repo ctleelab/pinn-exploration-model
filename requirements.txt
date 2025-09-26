@@ -9,6 +9,7 @@ argon2-cffi==23.1.0
 argon2-cffi-bindings==21.2.0
 arrow==1.3.0
 asttokens @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1733250440834/work
+astunparse==1.6.3
 async-lru==2.0.5
 attrs @ file:///home/conda/feedstock_root/build_artifacts/attrs_1741918516150/work
 babel @ file:///home/conda/feedstock_root/build_artifacts/babel_1738490167835/work
@@ -43,6 +44,7 @@ etils==1.11.0
 exceptiongroup @ file:///home/conda/feedstock_root/build_artifacts/exceptiongroup_1746947292760/work
 executing @ file:///home/conda/feedstock_root/build_artifacts/executing_1756729339227/work
 fastjsonschema==2.21.1
+flatbuffers==25.9.23
 flax==0.10.2
 flexcache @ file:///home/conda/feedstock_root/build_artifacts/flexcache_1733663531877/work
 flexparser @ file:///home/conda/feedstock_root/build_artifacts/flexparser_1733663506167/work
@@ -50,8 +52,12 @@ fonttools==4.56.0
 fqdn==1.5.1
 freetype-py @ file:///home/conda/feedstock_root/build_artifacts/freetype-py_1733689576473/work
 fsspec==2025.2.0
+gast==0.6.0
+google-pasta==0.2.0
+grpcio==1.75.0
 h11==0.14.0
 h2 @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_h2_1756364871/work
+h5py==3.14.0
 HeapDict @ file:///home/conda/feedstock_root/build_artifacts/heapdict_1733762606052/work
 hpack @ file:///home/conda/feedstock_root/build_artifacts/hpack_1737618293087/work
 hsluv @ file:///home/conda/feedstock_root/build_artifacts/hsluv_1746185454704/work
@@ -72,8 +78,10 @@ ipython==9.0.2
 ipython_pygments_lexers @ file:///home/conda/feedstock_root/build_artifacts/ipython_pygments_lexers_1737123620466/work
 ipywidgets==8.1.5
 isoduration==20.11.0
-jax==0.5.0
-jaxlib==0.5.0
+jax==0.7.2
+jax-cuda12-pjrt==0.7.2
+jax-cuda12-plugin==0.7.2
+jaxlib==0.7.2
 jedi @ file:///home/conda/feedstock_root/build_artifacts/jedi_1733300866624/work
 Jinja2 @ file:///home/conda/feedstock_root/build_artifacts/jinja2_1741263328855/work
 json5==0.10.0
@@ -92,11 +100,14 @@ jupyterlab==4.3.6
 jupyterlab_pygments==0.3.0
 jupyterlab_server==2.27.3
 jupyterlab_widgets==3.0.13
+keras==3.11.3
 kiwisolver==1.4.8
 lazy_loader @ file:///home/conda/feedstock_root/build_artifacts/lazy-loader_1733636780672/work
+libclang==18.1.1
 llvmlite==0.44.0
 locket @ file:///home/conda/feedstock_root/build_artifacts/locket_1650660393415/work
 magicgui @ file:///home/conda/feedstock_root/build_artifacts/magicgui_1749032494941/work
+Markdown==3.9
 markdown-it-py==3.0.0
 MarkupSafe @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1733219680183/work
 matplotlib==3.10.0
@@ -106,6 +117,7 @@ mistune==3.1.2
 ml_dtypes==0.5.1
 mrcfile==1.5.4
 msgpack @ file:///home/conda/feedstock_root/build_artifacts/msgpack-python_1756678523917/work
+namex==0.1.0
 napari @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_napari-base_1755352718/work
 napari-console @ file:///home/conda/feedstock_root/build_artifacts/napari-console_1734818806360/work
 napari-plugin-engine @ file:///home/conda/feedstock_root/build_artifacts/napari-plugin-engine_1734055871999/work
@@ -124,8 +136,21 @@ numba @ file:///home/conda/feedstock_root/build_artifacts/numba_1758565130111/wo
 numcodecs @ file:///home/conda/feedstock_root/build_artifacts/numcodecs_1756542591665/work
 numpy==2.2.2
 numpydoc @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpydoc_1750861325/work
+nvidia-cublas-cu12==12.9.1.4
+nvidia-cuda-cupti-cu12==12.9.79
+nvidia-cuda-nvcc-cu12==12.9.86
+nvidia-cuda-nvrtc-cu12==12.9.86
+nvidia-cuda-runtime-cu12==12.9.79
+nvidia-cudnn-cu12==9.13.0.50
+nvidia-cufft-cu12==11.4.1.4
+nvidia-cusolver-cu12==11.7.5.82
+nvidia-cusparse-cu12==12.5.10.65
+nvidia-nccl-cu12==2.28.3
+nvidia-nvjitlink-cu12==12.9.86
+nvidia-nvshmem-cu12==3.4.5
 opt_einsum==3.4.0
 optax==0.2.4
+optree==0.17.0
 orbax-checkpoint==0.11.3
 overrides==7.7.0
 packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1745345660/work
@@ -196,7 +221,11 @@ sphinxcontrib-qthelp @ file:///home/conda/feedstock_root/build_artifacts/sphinxc
 sphinxcontrib-serializinghtml @ file:///home/conda/feedstock_root/build_artifacts/sphinxcontrib-serializinghtml_1733750479108/work
 stack_data @ file:///home/conda/feedstock_root/build_artifacts/stack_data_1733569443808/work
 superqt @ file:///home/conda/feedstock_root/build_artifacts/superqt_1755086405973/work
+tensorboard==2.20.0
+tensorboard-data-server==0.7.2
+tensorflow==2.20.0
 tensorstore==0.1.71
+termcolor==3.1.0
 terminado==0.18.1
 tifffile==2025.1.10
 tinycss2==1.4.0
@@ -221,6 +250,7 @@ wcwidth @ file:///home/conda/feedstock_root/build_artifacts/wcwidth_175862227960
 webcolors==24.11.1
 webencodings==0.5.1
 websocket-client==1.8.0
+Werkzeug==3.1.3
 widgetsnbextension==4.0.13
 wrapt @ file:///home/conda/feedstock_root/build_artifacts/wrapt_1756851624575/work
 zarr @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_zarr_1758255670/work

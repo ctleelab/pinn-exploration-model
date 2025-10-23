@@ -3,38 +3,18 @@ import jax.numpy as jnp
 import optax
 from jax import jit
 from flax.training import train_state
-from pinn.model import PINN, loss_data, loss_physics, total_loss
+from pinn.model import PINN, loss_data, loss_physics, LEARNING_RATE, LAMBDA_1, LAMBDA_2, EPSILON
 import numpy as np
 from typing import NamedTuple
+from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, NamedTuple
 
 # Define TrainState for managing training parameters and optimizer
 class TrainState(train_state.TrainState):
     lambda_1: float  # Weight for loss_data
     lambda_2: float  # Weight for loss_physics
 
-# # Initialize model and training state
-# def create_train_state(key, learning_rate=1e-3, lambda_1=100000.0, lambda_2=0.001):
-#     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
-#     model = PINN()  # Create model instance
-#     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
-#     optimizer = optax.adam(learning_rate)  # Adam optimizer
-
-#     return TrainState(
-#         step=0,
-#         apply_fn=model.apply,
-#         params=params,
-#         tx=optimizer,
-#         opt_state=optimizer.init(params),
-#         lambda_1=lambda_1,  # Store loss weight for data term
-#         lambda_2=lambda_2   # Store loss weight for physics term
-#     ), model
-
-
-import jax, jax.numpy as jnp
-import optax
-from flax.training import train_state
-from typing import Callable
-from dataclasses import dataclass
 
 def cosine_with_restarts(lr_max: float, lr_min: float, T0: int, T_mult: float=2.0) -> Callable[[int], float]:
     """SGDR schedule: cosine decay that restarts; step is a Python int or jnp scalar."""
@@ -58,31 +38,6 @@ def cosine_with_restarts(lr_max: float, lr_min: float, T0: int, T_mult: float=2.
         return lr_min + (lr_max - lr_min) * cos
     return schedule
 
-
-
-# class AdditiveGaussianNoise(optax.GradientTransformation):
-#     def __init__(self, noise_std: float, key):
-#         self.noise_std = noise_std
-#         self.key = key
-
-#     def init(self, params):
-#         return ()
-
-#     def update(self, updates, state, params=None):
-#         # Split PRNG for reproducibility
-#         self.key, subkey = jax.random.split(self.key)
-#         noisy_updates = jax.tree_util.tree_map(
-#             lambda g: g + self.noise_std * jax.random.normal(subkey, g.shape),
-#             updates
-#         )
-#         return noisy_updates, state
-
-
-# def additive_gaussian_noise(noise_std: float, key):
-#     return AdditiveGaussianNoise(noise_std, key)
-
-
-from typing import Callable, NamedTuple
 
 # ----- schedules -----
 def sqrt_decay(sigma0: float) -> Callable[[jnp.ndarray], jnp.ndarray]:
@@ -134,9 +89,9 @@ def additive_gaussian_noise_annealed(*, sigma0: float, key, mode: str = "sqrt", 
 
 def create_train_state(
     key, 
-    learning_rate=1e-3, 
-    lambda_1=100000.0, 
-    lambda_2=0.001, 
+    learning_rate=LEARNING_RATE, 
+    lambda_1=LAMBDA_1, 
+    lambda_2=LAMBDA_2, 
     sdf_pretrain=None, # "sphere" or "plane"
     init_ckpt=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
@@ -144,22 +99,6 @@ def create_train_state(
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
 
     optimizer = optax.adam(learning_rate)  # Adam optimizer
-
-    # Cosine Annealing Schedule
-    # lr_sched = cosine_with_restarts(lr_max=5e-3, lr_min=1e-5, T0=1000, T_mult=1.0)
-    # lr_sched = cosine_with_restarts(lr_max=1e-2, lr_min=1e-4, T0=1000, T_mult=1.0)
-    # lr_sched = cosine_with_restarts(lr_max=5e-3, lr_min=1e-5, T0=2000, T_mult=1.0)
-    # lr_sched = cosine_with_restarts(lr_max=1e-3, lr_min=1e-5, T0=1000, T_mult=1.0)
-    # optimizer = optax.adam(learning_rate=lr_sched)  # Adam with scheduled LR
-
-    # key = jax.random.PRNGKey(0)
-    # optimizer = optax.chain(
-    #     optax.adam(learning_rate),
-    #     # additive_gaussian_noise(noise_std=1e-4, key=key)
-    #     additive_gaussian_noise_annealed(sigma0=1e-3, key=key, mode="exp") 
-    # )
-
-
 
     # Perform SDF pretraining before training
     if sdf_pretrain is not None:
@@ -179,7 +118,6 @@ def create_train_state(
         params = init_ckpt["params"]
         # params = init_ckpt['state']['params']
 
-
     return TrainState(
         step=0,
         apply_fn=model.apply,
@@ -190,18 +128,6 @@ def create_train_state(
         lambda_2=lambda_2
     ), model
 
-
-# def generate_sdf(grid_size=64, radius=15):
-#     """Generate a signed distance function (SDF) for a sphere of given radius."""
-#     x, y, z = jnp.meshgrid(
-#         jnp.linspace(-1.5, 1.5, grid_size),
-#         jnp.linspace(-1.5, 1.5, grid_size),
-#         jnp.linspace(-1.5, 1.5, grid_size),
-#         indexing="ij"
-#     )
-#     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
-#     sdf_values = jnp.maximum(jnp.maximum(jnp.abs(x) - radius, jnp.abs(y) - radius), jnp.abs(z) - radius)
-#     return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
 
 
 def generate_sdf_ori(grid_size=64, radius=0.5, epsilon=0.05):
@@ -234,7 +160,7 @@ def generate_sdf(
     grid_size=64,
     kind="plane",                  # "sphere" or "plane"
     radius=0.5,                     # used for sphere
-    epsilon=0.05,                   # smoothing width for tanh
+    epsilon=EPSILON,                   # smoothing width for tanh
 ):
 
     # Coordinate grid in [-1, 1]^3
@@ -307,15 +233,15 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
 
 # Training step function
 @jit
-def train_step(state, x_train, cryoET_data):
+def train_step(state, x_train, cryoET_data, thre):
 # def train_step(state, x_train, cryoET_data, membrane_indices):
     """ Performs one training step, computing gradients and updating parameters. """
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        loss_data_val = loss_data(phi_fn, cryoET_data)
+        loss_data_val = loss_data(phi_fn, cryoET_data, thre)
         # loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
-        loss_physics_val = loss_physics(phi_fn, x_train)
+        loss_physics_val = loss_physics(phi_fn, x_train, cryoET_data.shape)
         # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
         # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
         total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val

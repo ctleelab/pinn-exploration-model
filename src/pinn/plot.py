@@ -7,61 +7,56 @@ from pinn.model import PINN, laplacian_phi, grad_phi, hessian_phi
 from skimage.measure import marching_cubes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pinn.model import phase_volume, phase_surface
+from pinn.grid import phi_on_cryo_grid_xyz, axes_from_cryo_shape
 from matplotlib.colors import LinearSegmentedColormap
 
-def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
+def visualize_results(phi_fn, step=None, cryoET_data=None):
     """
     Visualizes the learned level-set function by plotting φ=0 contours.
     """
-    x = jnp.linspace(-1.5, 1.5, grid_size)  # Define the real coordinate values
-    y = jnp.linspace(-1.5, 1.5, grid_size)
-    z = jnp.linspace(-1.5, 1.5, grid_size)
-    
-    X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
-    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
-    phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
+    assert cryoET_data is not None
+    Z, Y, X = cryoET_data.shape
+
+    phi_xyz, (Xg, Yg, Xg), (x, y, z) = phi_on_cryo_grid_xyz(phi_fn, cryoET_data.shape, lo=-1.5, hi=1.5)
+    phi_zyx = jnp.transpose(phi_xyz, (2, 1, 0))     # (Z, Y, X) When we need to compare with cryoET_data
 
     # Extract a central slice (xy-plane at z=0)
-    mid_slice = grid_size // 2
+    mid_Z = Z // 2
     fig, ax = plt.subplots(figsize=(6, 6))
 
-    img = ax.imshow(phi_values[:, :, mid_slice].T, cmap='bwr', origin='lower',
-            extent=[x.min(), x.max(), y.min(), y.max()], 
-            vmin=-0.5, vmax=0.5, alpha=1.0)  # Ensure correct scaling
+    img = ax.imshow(
+        phi_zyx[mid_Z].T, cmap='bwr', origin='lower',
+        extent=[x.min(), x.max(), y.min(), y.max()],
+        vmin=-0.5, vmax=0.5, alpha=1.0
+    )
     plt.colorbar(img, label="φ(x,y,z)")
 
 
-    # Plot the cryo-ET data as a background heatmap
     if cryoET_data is not None:
-        cryoET_numpy = np.array(cryoET_data[:, :, mid_slice])
-        # alpha_mask = np.where(cryoET_numpy == 1, 0.5, 0.0)
-        alpha_mask = np.where(cryoET_numpy > 0.7, 0.5, 0.0)  # Show all intensities > 0.7
-        ax.imshow(np.ones_like(cryoET_numpy), cmap='grey', origin='lower',
-          extent=[x.min(), x.max(), y.min(), y.max()], alpha=alpha_mask)
+        cryo_slice = np.array(cryoET_data[mid_Z])  # (Y,X)
+        alpha_mask = np.where(cryo_slice > 0.7, 0.5, 0.0)
+        ax.imshow(np.ones_like(cryo_slice), cmap='grey', origin='lower',
+                    extent=[x.min(), x.max(), y.min(), y.max()], alpha=alpha_mask)
+        
 
-
-
-    # Plot contour lines for phi = 0
-    contour = ax.contour(X[:, :, mid_slice], Y[:, :, mid_slice], 
-                         phi_values[:, :, mid_slice], levels=[0], colors='black')
-
-    # ax.clabel(contour, fmt="φ=0", colors='black')  # Label contour line
-
-    
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
-
-    # Set appropriate ticks to match the physical coordinates
-    tick_positions = jnp.linspace(x.min(), x.max(), num=5)  # 5 major ticks
-    tick_labels = [f"{val:.1f}" for val in tick_positions]  # Format labels
-    
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels)
-    ax.set_yticks(tick_positions)
-    ax.set_yticklabels(tick_labels)
-
+    # φ=0 contour line uses (x,y,z) coordinates
+    ax.contour(Xg[:, :, mid_Z], Yg[:, :, mid_Z], phi_xyz[:, :, mid_Z], levels=[0], colors='black')
+    ax.set_xlabel("X-axis"); ax.set_ylabel("Y-axis")
     if step is not None:
-        ax.set_title(f"Level-Set Function at z=0 (Step {step})")
+        ax.set_title(f"Level-Set at z={float(z[mid_Z]):.2f} (Step {step})")
+
+
+    # # Set appropriate ticks to match the physical coordinates
+    # tick_positions = jnp.linspace(x.min(), x.max(), num=5)  # 5 major ticks
+    # tick_labels = [f"{val:.1f}" for val in tick_positions]  # Format labels
+    
+    # ax.set_xticks(tick_positions)
+    # ax.set_xticklabels(tick_labels)
+    # ax.set_yticks(tick_positions)
+    # ax.set_yticklabels(tick_labels)
+
+    # if step is not None:
+    #     ax.set_title(f"Level-Set Function at z=0 (Step {step})")
 
     # plt.show()
 
@@ -147,111 +142,161 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
 
     return img
 
-
-
 def visualize_cryoET_with_contours(
-    ax, 
-    step, 
-    checkpoint, 
-    cryoET_data, 
-    grid_size=64, 
-    slice_index=32, 
-    axis="z", 
-    no_label=False,
-    thresholding=False,
-    ):
-    """
-    Overlay extracted φ=0 contours on the original CryoET grayscale image.
-
-    - Uses the actual CryoET voxel grid instead of a fixed [-1.5, 1.5] range.
-    - Extracts and overlays level-set contours at φ=0.
-    - Allows visualization at a specified slice in x, y, or z directions.
-    """
-    state = checkpoint["state"]  # Extract saved model state
-    params = state["params"]  # Extract trained parameters
-
+    ax, step, checkpoint, cryoET_data, slice_index=32, axis="z",
+    no_label=False, thresholding=False,
+):
+    state = checkpoint["state"]; params = state["params"]
     model = PINN()
     phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
 
-    # Define the coordinate grid (0 to grid_size)
-    x = jnp.linspace(-1, 1, grid_size)
-    y = jnp.linspace(-1, 1, grid_size)
-    z = jnp.linspace(-1, 1, grid_size)
+    # φ (X,Y,Z)
+    phi_xyz, (Xg, Yg, Zg), (x, y, z) = phi_on_cryo_grid_xyz(phi_fn, cryoET_data.shape, lo=-1.0, hi=1.0)
 
-    # Generate a 3D grid
-    X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
-    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
-
-    # Compute φ values
-    phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
-
-    if thresholding is True:
+    if thresholding:
         cryoET_data = jnp.where(cryoET_data > 0.8, 1.0, 0.0)
 
-    # Extract the CryoET grayscale image at the selected slice
     if axis == "z":
-        cryoET_numpy = np.array(cryoET_data[:, :, slice_index])  # XY-plane
-        slice_data = phi_values[:, :, slice_index]
-        x_extent, y_extent = x, y
+        cryo_slice = np.array(cryoET_data[:, :, slice_index])  # (Y,X)
+        slice_phi  = phi_xyz[:, :, slice_index]                # (X,Y)
+        cx, cy     = Xg[:, :, slice_index], Yg[:, :, slice_index]
         xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
-        contour_x, contour_y = X[:, :, slice_index], Y[:, :, slice_index]
+        x_extent, y_extent = x, y
+        N = cryoET_data.shape[2]
     elif axis == "y":
-        cryoET_numpy = np.array(cryoET_data[:, slice_index, :])  # XZ-plane
-        slice_data = phi_values[:, slice_index, :]
-        x_extent, y_extent = x, z
+        cryo_slice = np.array(cryoET_data[:, slice_index, :])  # (Z,X)
+        slice_phi  = phi_xyz[:, slice_index, :]                # (X,Z)
+        cx, cy     = Xg[:, slice_index, :], Zg[:, slice_index, :]
         xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
-        contour_x, contour_y = X[:, slice_index, :], Z[:, slice_index, :]
+        x_extent, y_extent = x, z
+        N = cryoET_data.shape[0]
     elif axis == "x":
-        cryoET_numpy = np.array(cryoET_data[slice_index, :, :])  # YZ-plane
-        slice_data = phi_values[slice_index, :, :]
-        x_extent, y_extent = y, z
+        cryo_slice = np.array(cryoET_data[slice_index, :, :])  # (Y,X)
+        slice_phi  = phi_xyz[slice_index, :, :]                # (Y,Z)
+        cx, cy     = Yg[slice_index, :, :], Zg[slice_index, :, :]
         xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
-        contour_x, contour_y = Y[slice_index, :, :], Z[slice_index, :, :]
+        x_extent, y_extent = y, z
+        N = cryoET_data.shape[0]
 
-    # Plot CryoET grayscale image
-    custom_gray = LinearSegmentedColormap.from_list(
-        'custom_gray', ['#f0f0f0', '#777777']  # light gray to dark gray
-    )
-    # ax.imshow(cryoET_numpy, cmap='gray_r', origin='lower',
-    ax.imshow(cryoET_numpy, cmap=custom_gray, origin='lower',
+    # CryoET 
+    custom_gray = LinearSegmentedColormap.from_list('custom_gray', ['#f0f0f0', '#777777'])
+    ax.imshow(cryo_slice, cmap=custom_gray, origin='lower',
               extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
 
-    # binary_mask = np.where(cryoET_numpy > 0.8, 1, 0)
-    # ax.imshow(binary_mask, cmap='gray', origin='lower',
-    #           extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
+    # φ=0 contour
+    ax.contour(cx, cy, slice_phi, levels=[0], colors='red', linewidths=2.0)
 
-    # Extract contour lines for φ=0 and overlay them
-    # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=1.5)
-    contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=2.0)
-    # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors=["#d0e3e9"], linewidths=1.5)
-    # ax.clabel(contour, fmt="φ=0", colors='red')  # Label contour line
-
-
-    if no_label is True:
-        ax.set_xticks([])        # Remove x-axis ticks
-        ax.set_yticks([])        # Remove y-axis ticks
-
-        ax.set_xticklabels([])   # Remove x-axis tick labels (numbers)
-        ax.set_yticklabels([])   # Remove y-axis tick labels (numbers)
-
-        for spine in ax.spines.values():
-            spine.set_visible(False)  # Remove border box
+    if no_label:
+        ax.set_xticks([]); ax.set_yticks([]); [s.set_visible(False) for s in ax.spines.values()]
     else:
-        # Set axis labels
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        # Set tick positions and labels (Voxel-based)
-        tick_positions = np.linspace(-1, 1, num=5)  # Normalized positions
-        tick_labels = np.linspace(0, grid_size - 1, num=5).astype(int)  # Voxel indices
+        ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+        ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{N}")
+        ticks = np.linspace(-1, 1, 5)
+        ax.set_xticks(ticks); ax.set_yticks(ticks)
 
 
-        ax.set_xticks(tick_positions)
-        ax.set_xticklabels(tick_labels)
-        ax.set_yticks(tick_positions)
-        ax.set_yticklabels(tick_labels)
+# def visualize_cryoET_with_contours(
+#     ax, 
+#     step, 
+#     checkpoint, 
+#     cryoET_data, 
+#     slice_index=32, 
+#     axis="z", 
+#     no_label=False,
+#     thresholding=False,
+#     ):
+#     """
+#     Overlay extracted φ=0 contours on the original CryoET grayscale image.
 
-        ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+#     - Uses the actual CryoET voxel grid instead of a fixed [-1.5, 1.5] range.
+#     - Extracts and overlays level-set contours at φ=0.
+#     - Allows visualization at a specified slice in x, y, or z directions.
+#     """
+#     state = checkpoint["state"]  # Extract saved model state
+#     params = state["params"]  # Extract trained parameters
+
+#     model = PINN()
+#     phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
+
+#     # Define the coordinate grid (0 to grid_size)
+#     x = jnp.linspace(-1, 1, cryoET_data.shape[2])
+#     y = jnp.linspace(-1, 1, cryoET_data.shape[1])
+#     z = jnp.linspace(-1, 1, cryoET_data.shape[0])
+
+#     # Generate a 3D grid
+#     X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
+#     grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+#     # Compute φ values
+#     phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
+
+#     if thresholding is True:
+#         cryoET_data = jnp.where(cryoET_data > 0.8, 1.0, 0.0)
+
+#     # Extract the CryoET grayscale image at the selected slice
+#     if axis == "z":
+#         cryoET_numpy = np.array(cryoET_data[:, :, slice_index])  # XY-plane
+#         slice_data = phi_values[:, :, slice_index]
+#         x_extent, y_extent = x, y
+#         xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
+#         contour_x, contour_y = X[:, :, slice_index], Y[:, :, slice_index]
+#     elif axis == "y":
+#         cryoET_numpy = np.array(cryoET_data[:, slice_index, :])  # XZ-plane
+#         slice_data = phi_values[:, slice_index, :]
+#         x_extent, y_extent = x, z
+#         xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
+#         contour_x, contour_y = X[:, slice_index, :], Z[:, slice_index, :]
+#     elif axis == "x":
+#         cryoET_numpy = np.array(cryoET_data[slice_index, :, :])  # YZ-plane
+#         slice_data = phi_values[slice_index, :, :]
+#         x_extent, y_extent = y, z
+#         xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
+#         contour_x, contour_y = Y[slice_index, :, :], Z[slice_index, :, :]
+
+#     # Plot CryoET grayscale image
+#     custom_gray = LinearSegmentedColormap.from_list(
+#         'custom_gray', ['#f0f0f0', '#777777']  # light gray to dark gray
+#     )
+#     # ax.imshow(cryoET_numpy, cmap='gray_r', origin='lower',
+#     ax.imshow(cryoET_numpy, cmap=custom_gray, origin='lower',
+#               extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
+
+#     # binary_mask = np.where(cryoET_numpy > 0.8, 1, 0)
+#     # ax.imshow(binary_mask, cmap='gray', origin='lower',
+#     #           extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=1.0)
+
+#     # Extract contour lines for φ=0 and overlay them
+#     # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=1.5)
+#     contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors='red', linewidths=2.0)
+#     # contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors=["#d0e3e9"], linewidths=1.5)
+#     # ax.clabel(contour, fmt="φ=0", colors='red')  # Label contour line
+
+
+#     if no_label is True:
+#         ax.set_xticks([])        # Remove x-axis ticks
+#         ax.set_yticks([])        # Remove y-axis ticks
+
+#         ax.set_xticklabels([])   # Remove x-axis tick labels (numbers)
+#         ax.set_yticklabels([])   # Remove y-axis tick labels (numbers)
+
+#         for spine in ax.spines.values():
+#             spine.set_visible(False)  # Remove border box
+#     else:
+#         # Set axis labels
+#         ax.set_xlabel(xlabel)
+#         ax.set_ylabel(ylabel)
+
+#         # Set tick positions and labels (Voxel-based)
+#         tick_positions = np.linspace(-1, 1, num=5)  # Normalized positions
+#         tick_labels = np.linspace(0, grid_size - 1, num=5).astype(int)  # Voxel indices
+
+
+#         ax.set_xticks(tick_positions)
+#         ax.set_xticklabels(tick_labels)
+#         ax.set_yticks(tick_positions)
+#         ax.set_yticklabels(tick_labels)
+
+#         ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
 
 
 
@@ -291,8 +336,8 @@ def visualize_physics_loss(
         phi_fn = lambda x: model.apply(params, x)
 
     if cryoET_data is not None:
-        binary_mask = jnp.where(cryoET_data > threshold, 1.0, 0.0)
-        binary_mask = binary_mask.reshape(-1)
+        binary_mask = (cryoET_data > threshold).astype(float)  # (Z,Y,X)
+        binary_mask = jnp.transpose(binary_mask, (2,1,0)).reshape(-1).reshape(-1) # (X, Y, Z) -> flatten
         weight = 0.8
         w_in  = weight / jnp.sum(binary_mask)
         w_out = (1-weight) / jnp.sum(1 - binary_mask)
@@ -306,7 +351,8 @@ def visualize_physics_loss(
 
     # Compute φ values and Laplacian
     phi_vals = phi_fn(grid_points).squeeze()
-    lap_phi  = laplacian_phi(phi_fn, grid_points)
+    L = (2.0, 2.0, 2.0)
+    lap_phi  = laplacian_phi(phi_fn, grid_points, L)
     nl_term  = (phi_vals**2 - 1) * phi_vals
     residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
     gradient = grad_phi(phi_fn, grid_points)
@@ -345,7 +391,7 @@ def visualize_physics_loss(
     elif component == "tension":
         values = areadist
 
-    if component is not "phi":
+    if component != "phi":
         values = jnp.abs(values)
     values = values.reshape(grid_size, grid_size, grid_size)
 
@@ -421,35 +467,24 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64, no_label=False):
         checkpoint_label (str): Label for the plot title.
     """
 
-    # Define normalized coordinate grid (-1 to 1)
     x = jnp.linspace(-1, 1, grid_size)
     y = jnp.linspace(-1, 1, grid_size)
     z = jnp.linspace(-1, 1, grid_size)
-    
-    # Generate a 3D grid using meshgrid
     X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
-    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
-    
-    # Load model and parameters
+    pts = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], -1)
+
     model = PINN()
-    state = checkpoint["state"]
-    params = state["params"]
+    params = checkpoint["state"]["params"]
     phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
 
-    # Compute φ values over a 3D grid
-    phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
-    phi_values = phi_values.T
+    phi_xyz = phi_fn(pts).reshape(grid_size, grid_size, grid_size)  # (X,Y,Z)
+    phi_zyx = np.array(jnp.transpose(phi_xyz, (2,1,0)))             # (Z,Y,X)
 
-    # Convert φ values from JAX to NumPy for visualization
-    phi_values_np = np.array(phi_values)
-
-    # Apply marching cubes to extract the isosurface
-    verts, faces, _, _ = marching_cubes(phi_values_np, level=0, spacing=(2/grid_size, 2/grid_size, 2/grid_size))
+    sp = (2.0/grid_size, 2.0/grid_size, 2.0/grid_size)  # (dz, dy, dx)
+    verts, faces, _, _ = marching_cubes(phi_zyx, level=0, spacing=sp)
     verts -= 1.0
 
-    # Add the surface mesh with improved appearance
     mesh = Poly3DCollection(verts[faces], alpha=0.1, edgecolor="k", linewidth=0.2, facecolor="cyan")
-    # mesh = Poly3DCollection(verts[faces], alpha=0.1, edgecolor="k", linewidth=0.2, facecolor=["#d0e3e9"])
     ax.add_collection3d(mesh)
 
     # Improve visualization by adding a wireframe effect

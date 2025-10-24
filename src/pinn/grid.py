@@ -6,9 +6,9 @@ import jax.numpy as jnp
 # 
 def axes_from_cryo_shape(shape, lo=-1.0, hi=1.0):
     Z, Y, X = shape
-    x = jnp.linespace(lo, hi, X)
-    y = jnp.linespace(lo, hi, Y)
-    z = jnp.linespace(lo, hi, Z)
+    x = jnp.linspace(lo, hi, X)
+    y = jnp.linspace(lo, hi, Y)
+    z = jnp.linspace(lo, hi, Z)
     return x, y, z 
 
 def phi_on_cryo_grid_xyz(phi_fn, shape, lo=-1.0, hi=1.0):

@@ -4,8 +4,7 @@ import flax.linen as nn
 from jax import grad, jacfwd, jit, vmap
 import optax
 from flax.training import train_state
-
-GRID_SIZE = 64
+from functools import partial
 
 class PINN(nn.Module):
     # hidden_dim: int = 64  # Hidden layer size
@@ -29,7 +28,7 @@ class PINN(nn.Module):
         x = nn.tanh(x)
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
         x = nn.tanh(x)
-        return x.squeeze()
+        return x.squeeze(-1)
 
 
 def positional_encoding(x, num_frequencies=10, include_input=True):
@@ -130,19 +129,22 @@ def gaussian_curvature(phi_fn, x):
 # def loss_data(phi_fn, x, cryoET_data):
     # return jnp.mean((phi_fn(x.reshape(-1, 3)) - cryoET_data) ** 2)
 
-def loss_data(phi_fn, cryoET_data):
-# def loss_data(phi_fn, cryoET_data, membrane_indices):
+def loss_data(phi_fn, cryoET_data, grid_shape, thre):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
-    x_grid, y_grid, z_grid = jnp.meshgrid(
-        jnp.linspace(-1, 1, GRID_SIZE),
-        jnp.linspace(-1, 1, GRID_SIZE),
-        jnp.linspace(-1, 1, GRID_SIZE),
+
+    Z, Y, X = grid_shape
+    
+    # def loss_data(phi_fn, cryoET_data, membrane_indices):
+    z_grid, y_grid, x_grid = jnp.meshgrid(
+        jnp.linspace(-1, 1, Z),
+        jnp.linspace(-1, 1, Y),
+        jnp.linspace(-1, 1, X),
         indexing="ij"
     )
 
-    grid_points = jnp.stack([x_grid.ravel(), y_grid.ravel(), z_grid.ravel()], axis=-1)  # Shape: (N, 3)
+    grid_points = jnp.stack([z_grid.ravel(), y_grid.ravel(), x_grid.ravel()], axis=-1)  # Shape: (N, 3) --> (z_0, y_0, x_0), (x_0, y_0, x_1), ..
 
     # # Use jax.vmap() to compute gradient at multiple points
     # grad_phi_fn = jax.vmap(jax.grad(phi_fn, argnums=0))  # Apply grad to each point
@@ -151,7 +153,7 @@ def loss_data(phi_fn, cryoET_data):
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
 
-    binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
+    binary_mask = jnp.where(cryoET_data > thre, 1, 0) # original
     # binary_mask = jnp.where(cryoET_data > 0.7, 1, 0) 
     # binary_mask = jnp.where(cryoET_data > 0.82, 1, 0)
     # binary_mask = cryoET_data
@@ -215,6 +217,81 @@ def loss_data(phi_fn, cryoET_data):
 
     return membrane_loss
 
+def loss_data_batched(
+        phi_fn,
+        cryoET_data,
+        grid_shape,
+        batch_size=1_000_000,
+        threshold=0.8,
+        weight_in=0.8,
+        eps=1e-8):
+    """
+    Batched version of membrane loss:
+      - inside (mask==1):    enforce phi ≈ 0
+      - outside (mask==0):   enforce (phi^2 - 1)^2 ≈ 0
+    No full 3D reshape; works on flattened grid to save memory.
+    """
+    GRID_Z, GRID_Y, GRID_X = grid_shape
+
+    # 1) Prepare linespace
+    z_vals = jnp.linspace(-1.0, 1.0, GRID_Z, dtype=jnp.float32)
+    y_vals = jnp.linspace(-1.0, 1.0, GRID_Y, dtype=jnp.float32)
+    x_vals = jnp.linspace(-1.0, 1.0, GRID_X, dtype=jnp.float32)
+
+    # 2) Flatten mask
+    mask = (cryoET_data > threshold).astype(jnp.float32).ravel()
+    N = GRID_Z * GRID_Y * GRID_X
+    num_batches = (N + batch_size - 1) // batch_size
+
+    # Linear index -> (z,y,x) coordinates -> get from (z_vals, y_vals, x_vals)
+    def make_points_from_indices(idx):
+        # idx: [B]
+        zy = GRID_Y * GRID_X
+        z = idx // zy
+        rem = idx - z * zy
+        y = rem // GRID_X
+        x = rem - y * GRID_X
+        # Reflect the original code's stacking order: [x_grid.ravel(), y_grid.ravel(), z_grid.ravel()]
+        # Note: The first component here corresponds to the z-axis value; if phi_fn is being trained with this order, it is safest to keep it.
+        c1 = z_vals[z]  # was x_grid.ravel() in original (Z axis)
+        c2 = y_vals[y]  # was y_grid.ravel()
+        c3 = x_vals[x]  # was z_grid.ravel() (X axis)
+        return jnp.stack([c1, c2, c3], axis=-1)  # [B, 3]
+
+    init_carry = (jnp.array(0., jnp.float32),
+                jnp.array(0., jnp.float32),
+                jnp.array(0., jnp.float32),
+                jnp.array(0., jnp.float32))
+    
+    def scan_body(carry, b):
+        in_sum, out_sum, in_cnt, out_cnt = carry
+        start = b * batch_size
+        # 마지막 배치는 모자라는 부분을 '유효 마스크'로 걸러냄
+        B = jnp.minimum(batch_size, N - start)
+
+        # (고정 크기) 인덱스 벡터 만들고, 범위를 넘어가는 부분은 마지막 유효 인덱스로 클립
+        idx = start + jnp.arange(batch_size, dtype=jnp.int64)             # [batch_size]
+        idx_clip = jnp.minimum(idx, N - 1)
+        valid = (idx < (start + B)).astype(jnp.float32)                   # [batch_size], 마지막 배치 패딩 무시용
+
+        pts = make_points_from_indices(idx_clip)                          # [batch_size, 3]
+        phi = phi_fn(pts).reshape(-1)                                     # [batch_size]
+        m = mask[idx_clip]                                                # [batch_size]
+
+        in_sum  = in_sum  + jnp.sum(valid * m          * (phi - 0.0) ** 2)
+        in_cnt  = in_cnt  + jnp.sum(valid * m)
+        out_sum = out_sum + jnp.sum(valid * (1.0 - m) * (phi**2 - 1.0) ** 2)
+        out_cnt = out_cnt + jnp.sum(valid * (1.0 - m))
+
+        return (in_sum, out_sum, in_cnt, out_cnt), None
+
+    (in_sum, out_sum, in_cnt, out_cnt), _ = jax.lax.scan(scan_body, init_carry, jnp.arange(num_batches))
+
+    inside_loss  = in_sum  / jnp.maximum(in_cnt,  eps)
+    outside_loss = out_sum / jnp.maximum(out_cnt, eps)
+    membrane_loss = weight_in * inside_loss + (1.0 - weight_in) * outside_loss
+    return membrane_loss
+
 
 # def loss_physics(phi_fn, x, eps=1e-2):
 #     phi = phi_fn(x)  # Evaluate φ(x)
@@ -268,13 +345,97 @@ def loss_physics(phi_fn, x, epsilon = 0.05):
     return jnp.mean(residual**2)
 
 
+
+def make_phi_scalar(phi_apply):
+    # Single point x:[3] -> Schalar φ
+    def phi_scalar(x):
+        return jnp.squeeze(phi_apply(x[None, :]))
+    return phi_scalar
+
+def make_laplacian_point(phi_scalar):
+    # Laplacian Δφ(x) = trace(Hessian φ(x))
+    hess_phi = jax.hessian(phi_scalar)  # x->[3,3]
+    def lap_point(x):
+        H = hess_phi(x)
+        return jnp.trace(H)
+    return jax.jit(lap_point)
+
+def make_phi_and_lap_chunk(phi_apply):
+    phi_scalar = make_phi_scalar(phi_apply)
+    lap_point  = make_laplacian_point(phi_scalar)
+
+    # 청크 pts:[B,3] -> (phi_vals:[B], lap_vals:[B])
+    @jax.jit
+    def phi_and_lap_chunk(pts):
+        phi_vals = jax.vmap(phi_scalar)(pts)  # [B]
+        lap_vals = jax.vmap(lap_point)(pts)   # [B]
+        return phi_vals, lap_vals
+    return phi_and_lap_chunk
+
+def loss_physics_batched(phi_apply, x, epsilon=0.05, batch_size=65536):
+    """
+    Allen–Cahn-type residual: r = Δφ - (1/ε^2)*(φ^2-1)*φ
+    Computes mean squared residual E[r^2] in batches
+    """
+    x = x.reshape(-1, 3).astype(jnp.float32)
+    N = x.shape[0]
+    num_batches = (N + batch_size - 1) // batch_size
+
+    phi_and_lap_chunk = make_phi_and_lap_chunk(phi_apply)
+
+    def body(carry, b):
+        start = b * batch_size
+        B = jnp.minimum(batch_size, N - start)
+        idx = start + jnp.arange(batch_size)
+        idx = jnp.minimum(idx, N - 1)
+        valid = (idx < (start + B)).astype(jnp.float32)
+
+        pts = x[idx]                                   # [batch,3]
+        phi_vals, lap_phi_vals = phi_and_lap_chunk(pts)    # [batch], [batch]
+        residual = lap_phi_vals - (1.0 / (epsilon**2)) * (phi_vals**2 - 1.0) * phi_vals
+        part = jnp.sum(valid * (residual**2))
+        cnt  = jnp.sum(valid)
+        return (carry[0] + part, carry[1] + cnt), None
+
+    (sse, cnt), _ = jax.lax.scan(body,
+                                 (jnp.array(0., jnp.float32), jnp.array(0., jnp.float32)),
+                                 jnp.arange(num_batches))
+    return sse / jnp.maximum(cnt, 1.0)
+
+
 # Combined loss function
 def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
 # def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
     return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
     # return lambda_1 * loss_data(phi_fn, cryoET_data, membrane_indices) + lambda_2 * loss_physics(phi_fn, x)
 
+def total_loss_batched(
+    phi_apply, x, cryoET_data, lambda_1, lambda_2,
+    grid_shape=None,
+    batch_size_data=1_000_000,
+    batch_size_phys=65_536,
+    epsilon=0.05,
+):
+    # grid_shape 자동 설정
+    if grid_shape is None:
+        grid_shape = cryoET_data.shape  # (Z, Y, X)
 
+    data_term = loss_data_batched(
+        phi_apply,
+        cryoET_data,
+        grid_shape,
+        batch_size=batch_size_data,
+        threshold=0.8,
+        weight_in=0.8,
+        eps=1e-8
+    )
+    phys_term = loss_physics_batched(
+        phi_apply,
+        x,
+        epsilon=epsilon,
+        batch_size=batch_size_phys
+    )
+    return lambda_1 * data_term + lambda_2 * phys_term
 
 def phase_volume(phi_fn, x, V_box=8): # volume
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)

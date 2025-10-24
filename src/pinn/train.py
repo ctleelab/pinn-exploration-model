@@ -3,9 +3,11 @@ import jax.numpy as jnp
 import optax
 from jax import jit
 from flax.training import train_state
-from pinn.model import PINN, loss_data, loss_physics, total_loss
+from pinn.model import PINN, loss_data, loss_data_batched, loss_physics, loss_physics_batched, total_loss_batched
 import numpy as np
 from typing import NamedTuple
+from functools import partial
+
 
 # Define TrainState for managing training parameters and optimizer
 class TrainState(train_state.TrainState):
@@ -313,7 +315,7 @@ def train_step(state, x_train, cryoET_data):
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        loss_data_val = loss_data(phi_fn, cryoET_data)
+        loss_data_val = loss_data(phi_fn, cryoET_data, cryoET_data.shape)
         # loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
         loss_physics_val = loss_physics(phi_fn, x_train)
         # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
@@ -330,4 +332,49 @@ def train_step(state, x_train, cryoET_data):
 
 
 
+@partial(jax.jit,
+         static_argnames=('grid_shape', 'batch_size_data', 'batch_size_phys', 'epsilon'))
+def train_step_batched(state,
+               x_train,
+               cryoET_data,
+               *,
+               grid_shape,
+               batch_size_data=1_000_000,
+               batch_size_phys=65_536,
+               epsilon=0.05):
+    """One training step with batched data/physics losses."""
 
+    def compute_losses(params):
+        # 배치 입력 -> 1D 출력 보장
+        def phi_apply(pts):
+            y = state.apply_fn(params, jnp.atleast_2d(pts))  # (B,) 또는 (B,1)
+            return jnp.ravel(y)                              # 항상 (B,)
+
+        # --- Batched data loss ---
+        data_loss = loss_data_batched(
+            phi_apply,
+            cryoET_data,
+            grid_shape,
+            batch_size=batch_size_data,
+            threshold=0.8,
+            weight_in=0.8,
+            eps=1e-8,
+        )
+
+        # --- Batched physics loss ---
+        phys_loss = loss_physics_batched(
+            phi_apply,
+            x_train,
+            epsilon=epsilon,
+            batch_size=batch_size_phys,
+        )
+
+        total = state.lambda_1 * data_loss + state.lambda_2 * phys_loss
+        return total, (data_loss, phys_loss)
+
+    (loss, (loss_data_val, loss_physics_val)), grads = jax.value_and_grad(
+        compute_losses, has_aux=True
+    )(state.params)
+
+    new_state = state.apply_gradients(grads=grads)
+    return new_state, loss, loss_data_val, loss_physics_val

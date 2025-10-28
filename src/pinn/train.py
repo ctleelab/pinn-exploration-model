@@ -131,28 +131,37 @@ def create_train_state(
 
 
 def generate_sdf_ori(grid_size=64, radius=0.5, epsilon=0.05):
-    """Generate a signed distance function (SDF) for a sphere of given radius."""
+    """Generate a signed distance function (SDF) for a sphere of given radius.
+
+    grid_size may be an int (cubic) or a 3-tuple (nx, ny, nz). The returned
+    grid_points are stacked as (x, y, z) and the volume is reshaped to
+    (nx, ny, nz) which matches meshgrid(indexing='ij') ordering.
+    """
+    # Normalize grid_size to (nx, ny, nz)
+    if isinstance(grid_size, int):
+        nx = ny = nz = int(grid_size)
+    elif isinstance(grid_size, (tuple, list)) and len(grid_size) == 3:
+        nx, ny, nz = map(int, grid_size)
+    else:
+        raise ValueError("grid_size must be an int or a 3-tuple")
 
     # Define voxel-based coordinate grid
     x, y, z = jnp.meshgrid(
-        jnp.linspace(-1, 1, grid_size),
-        jnp.linspace(-1, 1, grid_size),
-        jnp.linspace(-1, 1, grid_size),
+        jnp.linspace(-1, 1, nx),
+        jnp.linspace(-1, 1, ny),
+        jnp.linspace(-1, 1, nz),
         indexing="ij"
     )
 
     # Compute SDF for a sphere (normalized)
     sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
-    # sdf_values = -jnp.tanh(sdf_values)
-    sdf_values = -jnp.tanh(sdf_values/epsilon)
-    # sdf_values = jnp.abs(sdf_values)
-    # sdf_values = -sdf_values
+    sdf_values = -jnp.tanh(sdf_values / epsilon)
 
     # Flatten grid points for training
     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
-    sdf_values = sdf_values.ravel()  # Flatten the SDF values
+    sdf_values = sdf_values.ravel()
 
-    return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
+    return grid_points, sdf_values.reshape(nx, ny, nz)
 
 
 
@@ -160,14 +169,26 @@ def generate_sdf(
     grid_size=64,
     kind="plane",                  # "sphere" or "plane"
     radius=0.5,                     # used for sphere
-    epsilon=EPSILON,                   # smoothing width for tanh
+    epsilon=EPSILON,                # smoothing width for tanh
 ):
+    """Generate an SDF on a grid. Accepts an int or a (nx,ny,nz) tuple.
 
-    # Coordinate grid in [-1, 1]^3
+    Returns: (grid_points, sdf_volume) where grid_points.shape == (N,3)
+    and sdf_volume.shape == (nx, ny, nz) (meshgrid ordering 'ij').
+    """
+    # Normalize grid_size to (nx, ny, nz)
+    if isinstance(grid_size, int):
+        nx = ny = nz = int(grid_size)
+    elif isinstance(grid_size, (tuple, list)) and len(grid_size) == 3:
+        nx, ny, nz = map(int, grid_size)
+    else:
+        raise ValueError("grid_size must be an int or a 3-tuple")
+
+    # Coordinate grid in [-1, 1]^3 with meshgrid(indexing='ij') -> shape (nx,ny,nz)
     x, y, z = jnp.meshgrid(
-        jnp.linspace(-1, 1, grid_size),
-        jnp.linspace(-1, 1, grid_size),
-        jnp.linspace(-1, 1, grid_size),
+        jnp.linspace(-1, 1, nx),
+        jnp.linspace(-1, 1, ny),
+        jnp.linspace(-1, 1, nz),
         indexing="ij"
     )
 
@@ -183,15 +204,15 @@ def generate_sdf(
         d2 = jnp.sqrt((x+0.5)**2 + y**2 + z**2) - 0.4
         sdf_values = jnp.where(jnp.abs(d1) < jnp.abs(d2), d1, d2)
     else:
-        raise ValueError("kind must be 'sphere' or 'plane'")
+        raise ValueError("kind must be 'sphere', 'plane', or 'multi'")
 
-    sdf_values = -jnp.tanh(sdf_values/epsilon)
+    sdf_values = -jnp.tanh(sdf_values / epsilon)
 
     # Flatten grid points for training
     grid_points = jnp.stack([x.ravel(), y.ravel(), z.ravel()], axis=-1)
-    sdf_values = sdf_values.ravel()  # Flatten the SDF values
+    sdf_values = sdf_values.ravel()
 
-    return grid_points, sdf_values.reshape(grid_size, grid_size, grid_size)
+    return grid_points, sdf_values.reshape(nx, ny, nz)
 
 
 

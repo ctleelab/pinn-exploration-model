@@ -7,7 +7,7 @@ import optax
 from flax.training import train_state
 
 # Model Parameters
-WEIGHT_IN = 0.8
+WEIGHT_IN = 0.5
 EPSILON = 0.05
 LEARNING_RATE = 1e-3
 LAMBDA_1 = 100000.0

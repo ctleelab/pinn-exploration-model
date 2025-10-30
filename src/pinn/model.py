@@ -162,7 +162,10 @@ def loss_data(phi_fn, cryoET_data, thre):
     # Change phi_xyz into phi_zyx when we have to compare with cryoET_data
     phi_zyx = jnp.transpose(phi_xyz, (2, 1, 0))
 
-    binary_mask = (cryoET_data > thre).astype(phi_zyx.dtype)
+    if thre != None:
+        binary_mask = (cryoET_data > thre).astype(phi_zyx.dtype)
+    else:
+        binary_mask = cryoET_data
 
     inside_loss = jnp.sum(binary_mask * (phi_zyx - 0.0) ** 2) / jnp.sum(binary_mask)
     outside_loss = jnp.sum((1 - binary_mask) * (1.0 - phi_zyx ** 2) ** 2) / jnp.sum(1 - binary_mask)

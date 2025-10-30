@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import optax
-from jax import jit
+from jax import jit, lax
 from flax.training import train_state
 from pinn.model import PINN, loss_data, loss_physics, LEARNING_RATE, LAMBDA_1, LAMBDA_2, EPSILON
 import numpy as np
@@ -254,17 +254,21 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
 
 # Training step function
 @jit
-def train_step(state, x_train, cryoET_data, thre):
+def train_step(state, x_train, cryoET_data, thre, phy_app):
 # def train_step(state, x_train, cryoET_data, membrane_indices):
     """ Performs one training step, computing gradients and updating parameters. """
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
         loss_data_val = loss_data(phi_fn, cryoET_data, thre)
-        # loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
-        loss_physics_val = loss_physics(phi_fn, x_train, cryoET_data.shape)
-        # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
-        # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
+
+        pred = jnp.asarray(phy_app).astype(bool)  # ensure JAX scalar bool
+        loss_physics_val = lax.cond(
+            pred,
+            lambda _: loss_physics(phi_fn, x_train, cryoET_data.shape),
+            lambda _: jnp.array(1.0, dtype=jnp.float32),
+            operand=None
+        )
         total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val
         return total_loss_val, (loss_data_val, loss_physics_val)
 

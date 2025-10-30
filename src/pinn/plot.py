@@ -160,7 +160,7 @@ def visualize_checkpoint_level_set(ax, step, checkpoint, cryoET_data=None, grid_
 
     # Contour: build meshgrid matching slice shape
     X2, Y2 = np.meshgrid(col_axis, row_axis, indexing='xy')
-    contour = ax.contour(X2, Y2, slice_phi, levels=[0], colors="black", linewidths=1.5)
+    # contour = ax.contour(X2, Y2, slice_phi, levels=[0], colors="black", linewidths=1.5)
 
     # Set axis labels and ticks
     ax.set_xlabel(xlabel)
@@ -419,13 +419,13 @@ def plot_3d_isosurface(ax, step, checkpoint, shape, no_label=False):
     """
 
     # grid_size may be int or tuple; normalize to (X_len, Y_len, Z_len)
-    X_len, Y_len, Z_len = shape[2], shape[1], shape[0]
+    X_len, Y_len, Z_len = shape
 
     model = PINN()
     params = checkpoint["state"]["params"]
     phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
 
-    phi_xyz = phi_on_cryo_grid_xyz(phi_fn, shape=shape, lo=-1, hi=1)
+    phi_xyz, _, _ = phi_on_cryo_grid_xyz(phi_fn, shape=shape, lo=-1, hi=1)
     # Convert to (Z,Y,X) ordering and make a contiguous numpy float32 array for skimage
     phi_zyx = _to_zyx(np.array(phi_xyz))
 

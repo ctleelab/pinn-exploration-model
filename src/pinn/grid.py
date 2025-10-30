@@ -1,8 +1,5 @@
 import jax.numpy as jnp
 
-# cryoET_data.shape == (Z, Y, X) 
-# model/function.shape == (x, y, z)
-
 # 
 def axes_from_cryo_shape(shape, lo=-1.0, hi=1.0):
     Z, Y, X = shape

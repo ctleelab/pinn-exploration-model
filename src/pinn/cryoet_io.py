@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 import mrcfile
+import tifffile
 
 # Define a synthetic cryo-ET dataset where the membrane edge has higher intensity
 def generate_synthetic_cryoET(grid_size=64, radius=1.0, edge_thickness=0.05, noise_level=0.1):
@@ -73,39 +74,46 @@ def plot_synthetic_cryoET(cryoET_data, grid_size=64):
 
     plt.show()
 
+def open_raw_data(file_path):
+    if file_path.endswith(".mrc"):
+        with mrcfile.open(file_path) as mrc:
+            data = mrc.data
+    elif file_path.endswith(".tif"):
+        data = tifffile.imread(file_path)
+    return data.astype(jnp.float32)
 
-def load_mrc_data(file_path, grid_size=64):
-    """
-    Loads a 3D cryo-ET membrane image from an MRC file and normalizes it.
+# def load_mrc_data(file_path, grid_size=64):
+#     """
+#     Loads a 3D cryo-ET membrane image from an MRC file and normalizes it.
     
-    Args:
-        file_path (str): Path to the MRC file.
-        grid_size (int or tuple of 3 ints): Output size (uniform or (Z, Y, X)).
+#     Args:
+#         file_path (str): Path to the MRC file.
+#         grid_size (int or tuple of 3 ints): Output size (uniform or (Z, Y, X)).
         
-    Returns:
-        jnp.ndarray: Normalized 3D cryo-ET data.
-    """
-    with mrcfile.open(file_path, permissive=True) as mrc:
-        mrc_data = mrc.data.astype(jnp.float32)  # Convert to JAX-compatible float32
+#     Returns:
+#         jnp.ndarray: Normalized 3D cryo-ET data.
+#     """
+#     with mrcfile.open(file_path, permissive=True) as mrc:
+#         mrc_data = mrc.data.astype(jnp.float32)  # Convert to JAX-compatible float32
 
-    # Normalize intensity to [0,1]
-    mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
+#     # Normalize intensity to [0,1]
+#     mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
 
-    # Determine target shape
-    if isinstance(grid_size, int):
-        target_shape = (grid_size, grid_size, grid_size)
-    elif isinstance(grid_size, tuple) and len(grid_size) == 3:
-        target_shape = grid_size
-    else:
-        raise ValueError("grid_size must be either an int or a tuple of 3 integers.")
+#     # Determine target shape
+#     if isinstance(grid_size, int):
+#         target_shape = (grid_size, grid_size, grid_size)
+#     elif isinstance(grid_size, tuple) and len(grid_size) == 3:
+#         target_shape = grid_size
+#     else:
+#         raise ValueError("grid_size must be either an int or a tuple of 3 integers.")
 
-    # Resize if needed
-    if mrc_data.shape != target_shape:
-        print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
-        from skimage.transform import resize
-        mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
-        mrc_data = jnp.array(mrc_data)
+#     # Resize if needed
+#     if mrc_data.shape != target_shape:
+#         print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
+#         from skimage.transform import resize
+#         mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
+#         mrc_data = jnp.array(mrc_data)
 
-    return mrc_data
+#     return mrc_data
 
 

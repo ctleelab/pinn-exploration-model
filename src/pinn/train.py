@@ -1,9 +1,11 @@
+import os
 import jax
 import jax.numpy as jnp
 import optax
 from jax import jit, lax
 from flax.training import train_state
 from pinn.model import PINN, loss_data, loss_physics, LEARNING_RATE, LAMBDA_1, LAMBDA_2, EPSILON
+from pinn.checkpoint_io import _ensure_dir, load_state_bytes, save_params_bytes
 import numpy as np
 from typing import NamedTuple
 from typing import Callable
@@ -93,7 +95,9 @@ def create_train_state(
     lambda_1=LAMBDA_1, 
     lambda_2=LAMBDA_2, 
     sdf_pretrain=None, # "sphere" or "plane"
-    init_ckpt=None):
+    init_ckpt=None,
+    sdf_cache_dir=None
+    ):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
@@ -102,15 +106,23 @@ def create_train_state(
 
     # Perform SDF pretraining before training
     if sdf_pretrain is not None:
-        print("Pretraining the network using SDF...")
-        grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain)
+        _ensure_dir(sdf_cache_dir)
+        cache_path = os.path.join(sdf_cache_dir, f"{sdf_pretrain}.msgpack")
 
-        # Select random training points
-        train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
-        x_train = grid_points[train_idx]
-        y_train = sdf_initial.ravel()[train_idx]
+        if os.path.isfile(cache_path):
+            params = load_state_bytes(cache_path, params)
+        else:
+            print("Pretraining the network using SDF...")
+            grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain)
 
-        params = initialize_network_with_sdf(model, params, y_train, x_train)
+            # Select random training points
+            train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
+            x_train = grid_points[train_idx]
+            y_train = sdf_initial.ravel()[train_idx]
+
+            params = initialize_network_with_sdf(model, params, y_train, x_train)
+            print(f"[SDF cache] Saving pretrained params to: {cache_path}")
+            save_params_bytes(cache_path, params)
 
     # Use pretrained network structure as initial condition
     if init_ckpt is not None:
@@ -192,8 +204,24 @@ def generate_sdf(
         indexing="ij"
     )
 
+    kind = str(kind).lower().strip().replace("-", "_")
+
+    print(kind)
+
     if kind == "sphere":
-        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - radius
+        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - 0.8
+
+    elif kind == "sine":
+        r = jnp.sqrt(x**2 + y**2 + z**2)
+        base_radius = radius
+        layer_thickness = radius * 0.5  # 층 두께 조절
+
+        # sin() 기반으로 주기적인 sign flip → 동심 링 패턴
+        sdf_values = jnp.sin(jnp.pi * (r - base_radius) / layer_thickness) * (r - base_radius)
+
+    elif kind == "double":
+        r = jnp.sqrt(x**2 + y**2 + z**2)
+        sdf_values = jnp.abs(r - radius*1.3) - (radius - radius*0.8)
 
     elif kind == "plane":
         # sdf_values = x
@@ -203,8 +231,9 @@ def generate_sdf(
         d1 = jnp.sqrt((x-0.5)**2 + y**2 + z**2) - 0.4
         d2 = jnp.sqrt((x+0.5)**2 + y**2 + z**2) - 0.4
         sdf_values = jnp.where(jnp.abs(d1) < jnp.abs(d2), d1, d2)
+
     else:
-        raise ValueError("kind must be 'sphere', 'plane', or 'multi'")
+        raise ValueError("kind must be 'sphere', 'plane', 'double', 'sine', or 'multi'")
 
     sdf_values = -jnp.tanh(sdf_values / epsilon)
 

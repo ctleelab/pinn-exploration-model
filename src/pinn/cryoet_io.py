@@ -78,8 +78,22 @@ def open_raw_data(file_path):
     if file_path.endswith(".mrc"):
         with mrcfile.open(file_path) as mrc:
             data = mrc.data
+            print("Data shape:", mrc.data.shape)  # Dimensions of the data
+            print("Voxel size (angstroms):", mrc.voxel_size)  # Voxel size if available
+            print("Map origin:", mrc.header.origin)  # Origin of the map
+            print("Pixel spacing:", mrc.voxel_size)  # Pixel spacing for each axis
+            print("Minimum and maximum density:", mrc.header.dmin, mrc.header.dmax)
+            print("Mean density:", mrc.header.dmean)
+
+            # Other specific header fields
+            print("Number of columns, rows, and sections:", mrc.header.nx, mrc.header.ny, mrc.header.nz)
+            print("Data mode:", mrc.header.mode)  # Data type (e.g., byte, float)
+            print("Cell dimensions (angstroms):", mrc.header.cella)  # Cell dimensions
+            print("Cell angles:", mrc.header.cellb)  # Cell angles
     elif file_path.endswith(".tif"):
         data = tifffile.imread(file_path)
+    else:
+        raise Exception("[Error] File must end with .mrc or .tif")
     return data.astype(jnp.float32)
 
 # def load_mrc_data(file_path, grid_size=64):

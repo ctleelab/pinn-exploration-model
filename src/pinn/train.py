@@ -110,6 +110,7 @@ def create_train_state(
         cache_path = os.path.join(sdf_cache_dir, f"{sdf_pretrain}.msgpack")
 
         if os.path.isfile(cache_path):
+            print("SDF cache exists. Fetching SDF cache...")
             params = load_state_bytes(cache_path, params)
         else:
             print("Pretraining the network using SDF...")
@@ -181,7 +182,7 @@ def generate_sdf(
     grid_size=64,
     kind="plane",                  # "sphere" or "plane"
     radius=0.5,                     # used for sphere
-    epsilon=EPSILON,                # smoothing width for tanh
+    epsilon=0.05,                # smoothing width for tanh
 ):
     """Generate an SDF on a grid. Accepts an int or a (nx,ny,nz) tuple.
 

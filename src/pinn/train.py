@@ -210,7 +210,7 @@ def generate_sdf(
     print(kind)
 
     if kind == "sphere":
-        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - 0.8
+        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - 0.5
 
     elif kind == "sine":
         r = jnp.sqrt(x**2 + y**2 + z**2)
@@ -284,18 +284,18 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
 
 # Training step function
 @jit
-def train_step(state, x_train, cryoET_data, thre, phy_app):
+def train_step(state, x_train, data_binary_mask, phy_app):
 # def train_step(state, x_train, cryoET_data, membrane_indices):
     """ Performs one training step, computing gradients and updating parameters. """
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        loss_data_val = loss_data(phi_fn, cryoET_data, thre)
+        loss_data_val = loss_data(phi_fn, data_binary_mask)
 
         pred = jnp.asarray(phy_app).astype(bool)  # ensure JAX scalar bool
         loss_physics_val = lax.cond(
             pred,
-            lambda _: loss_physics(phi_fn, x_train, cryoET_data.shape),
+            lambda _: loss_physics(phi_fn, x_train, data_binary_mask.shape),
             lambda _: jnp.array(1.0, dtype=jnp.float32),
             operand=None
         )

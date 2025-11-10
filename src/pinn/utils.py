@@ -1,7 +1,7 @@
 import numpy as np
 from pinn.model import loss_data, loss_physics, total_loss
 
-def initial_loss(state, x_train, cryoET_data, thre):
+def initial_loss(state, x_train, data_binary_mask):
 # def initial_loss(state, x_train, cryoET_data, membrane_indices):
     """
     Compute the actual initial loss values before training starts.
@@ -12,8 +12,8 @@ def initial_loss(state, x_train, cryoET_data, thre):
     phi_fn = lambda x: state.apply_fn(state.params, x.reshape(-1, 3))
 
     # Compute the losses
-    loss_data_val = loss_data(phi_fn, cryoET_data, thre)
-    loss_physics_val = loss_physics(phi_fn, x_train, cryoET_data.shape)
+    loss_data_val = loss_data(phi_fn, data_binary_mask)
+    loss_physics_val = loss_physics(phi_fn, x_train, data_binary_mask.shape)
     total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val
 
     # Convert to structured format (single-step array)

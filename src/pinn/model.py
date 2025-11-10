@@ -8,10 +8,10 @@ from flax.training import train_state
 
 # Model Parameters
 WEIGHT_IN = 0.5
-EPSILON = 0.01
+EPSILON = 0.05
 LEARNING_RATE = 1e-3
 LAMBDA_1 = 100000.0
-LAMBDA_2 = 0.001
+LAMBDA_2 = 0.005
 
 class PINN(nn.Module):
     hidden_dim: int = 16  # Hidden layer size
@@ -152,23 +152,18 @@ def gaussian_curvature(phi_fn, x):
 
 
 # Data fidelity loss (ensures φ(x,y,z) aligns with cryo-ET data)
-def loss_data(phi_fn, cryoET_data, thre):
+def loss_data(phi_fn, data_binary_mask):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
     """
 
     # Get (x, y, z) grid from cryoET_data.shape (Z, Y, X)
-    phi_xyz, _, _ = phi_on_cryo_grid_xyz(phi_fn, cryoET_data.shape, lo=-1.0, hi=1.0)
+    phi_xyz, _, _ = phi_on_cryo_grid_xyz(phi_fn, data_binary_mask.shape, lo=-1.0, hi=1.0)
     # Change phi_xyz into phi_zyx when we have to compare with cryoET_data
     phi_zyx = jnp.transpose(phi_xyz, (2, 1, 0))
 
-    if thre != None:
-        binary_mask = (cryoET_data > thre).astype(phi_zyx.dtype)
-    else:
-        binary_mask = cryoET_data
-
-    inside_loss = jnp.sum(binary_mask * (phi_zyx - 0.0) ** 2) / jnp.sum(binary_mask)
-    outside_loss = jnp.sum((1 - binary_mask) * (1.0 - phi_zyx ** 2) ** 2) / jnp.sum(1 - binary_mask)
+    inside_loss = jnp.sum(data_binary_mask * (phi_zyx - 0.0) ** 2) / jnp.sum(data_binary_mask)
+    outside_loss = jnp.sum((1 - data_binary_mask) * (1.0 - phi_zyx ** 2) ** 2) / jnp.sum(1 - data_binary_mask)
     # inside_loss = jnp.sum(binary_mask * (phi_zyx - 0.0) ** 2) / (jnp.sum(binary_mask) + EPSILON)
     # outside_loss = jnp.sum((1 - binary_mask) * (1.0 - phi_zyx ** 2) ** 2) / (jnp.sum(1 - binary_mask) + EPSILON)
     membrane_loss = WEIGHT_IN * inside_loss + (1 - WEIGHT_IN) * outside_loss

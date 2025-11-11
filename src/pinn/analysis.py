@@ -6,8 +6,82 @@ from pinn.model import phase_volume, phase_surface, phase_bend
 import mrcfile
 from skimage import measure
 import trimesh
-from pinn.cryoet_io import load_mrc_data
 import matplotlib.pyplot as plt
+
+def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose=True):
+    from pinn.grid import phi_on_cryo_grid_xyz
+    from pinn.plot import _to_zyx
+    with mrcfile.open(mask_file_path, permissive=True) as mrc:
+        gt_mask = np.asarray(mrc.data, dtype=np.float32)
+    gt_mask = np.where(gt_mask > 0.5, 1, 0)
+
+    state = checkpoint["state"]; params = state["params"]
+    model = PINN()
+    phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
+    phi_xyz, _, _ = phi_on_cryo_grid_xyz(phi_fn, gt_mask.shape, lo=-1.0, hi=1.0)
+    phi_zyx = _to_zyx(np.array(phi_xyz))  
+    lo, hi = band
+    pred_mask = (phi_zyx > lo) & (phi_zyx < hi)
+
+    if pred_mask.shape != gt_mask.shape:
+        raise ValueError(f"Shape mismatch: pred {pred_mask.shape} vs gt {gt_mask.shape}")
+    
+    # --- Dice ---
+    intersection = np.count_nonzero(gt_mask & pred_mask)
+    gt_sum = np.count_nonzero(gt_mask)
+    pd_sum = np.count_nonzero(pred_mask)
+    volume_sum = gt_sum + pd_sum
+    dice = (2.0 * intersection) / (volume_sum + 1e-8)
+
+    fig, axes = plt.subplots(3, 4, figsize=(12, 12))  # 4행 3열
+
+    # 슬라이스 인덱스 계산
+    x_indices = np.linspace(0, gt_mask.shape[2] - 1, 6, dtype=int)
+    y_indices = np.linspace(0, gt_mask.shape[1] - 1, 6, dtype=int)
+    z_indices = np.linspace(0, gt_mask.shape[0] - 1, 6, dtype=int)
+
+    # 각 방향별 슬라이스 시각화
+    for i in range(1, 5):
+        # Z-slice
+        z = z_indices[i]
+        gt_z = gt_mask[z, :, :]
+        pd_z = pred_mask[z, :, :]
+        axes[0, i-1].imshow(gt_z, cmap="gray", alpha=1.0)
+        axes[0, i-1].imshow(pd_z, cmap="Blues", alpha=0.6)
+        axes[0, i-1].set_title(f"Z-slice {z}")
+        axes[0, i-1].axis("off")
+
+        # Y-slice
+        y = y_indices[i]
+        gt_y = gt_mask[:, y, :]
+        pd_y = pred_mask[:, y, :]
+        axes[1, i-1].imshow(gt_y, cmap="gray", alpha=1.0)
+        axes[1, i-1].imshow(pd_y, cmap="Blues", alpha=0.6)
+        axes[1, i-1].set_title(f"Y-slice {y}")
+        axes[1, i-1].axis("off")
+
+        # X-slice
+        x = x_indices[i]
+        gt_x = gt_mask[:, :, x]
+        pd_x = pred_mask[:, :, x]
+        axes[2, i-1].imshow(gt_x, cmap="gray", alpha=1.0)
+        axes[2, i-1].imshow(pd_x, cmap="Blues", alpha=0.6)
+        axes[2, i-1].set_title(f"X-slice {x}")
+        axes[2, i-1].axis("off")
+
+    plt.suptitle("White = GT Mask, Blue = Prediction", fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+
+    if verbose:
+        print(f"intersection: {intersection}")
+        print(f"gt: {gt_sum} / {gt_mask.size}")
+        print(f"pd: {pd_sum} / {pred_mask.size}")
+        print(f"volume_sum: {volume_sum}")
+        print(f"Dice: {dice:.6f}")
+
+    return 1.0 - dice
 
 
 def calc_area_seg(ckpt_dat, epsilon, sampling, grid_size=64, num_point=10000):

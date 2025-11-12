@@ -10,7 +10,14 @@ from pinn.model import phase_volume, phase_surface
 from pinn.grid import phi_on_cryo_grid_xyz, axes_from_cryo_shape
 from matplotlib.colors import LinearSegmentedColormap
 from typing import Tuple, Union
+import napari
 
+def napari_view(data, mask):
+    viewer = napari.Viewer()
+    viewer.add_image(data, name='tomogram', colormap='gray', blending='additive')
+    if mask is not None:
+        viewer.add_image(mask, name='mask', colormap='red', blending='additive', opacity=0.5)
+    napari.run()
 
 def _normalize_grid_shape(grid_size: Union[int, Tuple[int, int, int]], cryo_shape=None):
     """Return (X, Y, Z) grid sizes.
@@ -180,6 +187,21 @@ def visualize_checkpoint_level_set(ax, step, checkpoint, cryoET_data=None, grid_
     ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{max(X_len, Y_len, Z_len)}")
 
     return img
+
+def visualize_zyx_midslice(data, title=None):
+    z, y, x = data.shape
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+    axes[0].imshow(data[int(z//2),:,:], cmap="gray", alpha=1.0)
+    axes[0].set_title(f"mid z ({int(z//2)}/{z})")
+    axes[1].imshow(data[:,int(y//2),:], cmap="gray", alpha=1.0)
+    axes[1].set_title(f"mid y ({int(y//2)}/{y})")
+    axes[2].imshow(data[:,:,int(x//2)], cmap="gray", alpha=1.0)
+    axes[2].set_title(f"mid x ({int(x//2)}/{x})")
+    if title:
+        plt.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
 
 
 def visualize_checkpoint_cryoET_with_contours(

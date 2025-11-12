@@ -210,7 +210,7 @@ def generate_sdf(
     print(kind)
 
     if kind == "sphere":
-        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - 0.5
+        sdf_values = jnp.sqrt(x**2 + y**2 + z**2) - 0.8
 
     elif kind == "sine":
         r = jnp.sqrt(x**2 + y**2 + z**2)

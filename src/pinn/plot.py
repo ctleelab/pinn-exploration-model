@@ -55,15 +55,6 @@ def _to_zyx(arr: np.ndarray) -> np.ndarray:
         raise ValueError("expected 3D array")
     # Common shapes: (X,Y,Z) or (Z,Y,X)
     a, b, c = arr.shape
-    # Heuristic: if the first dim is smallest it's likely Z; otherwise assume (X,Y,Z)
-    # But safer: if a == c assume symmetric cube -> keep as (X,Y,Z) and transpose to (Z,Y,X)
-    # We try both permutations and pick the one with Z being the first dim if plausible.
-    # If arr was produced with meshgrid(indexing='ij') and reshape((nx,ny,nz)) then shape==(nx,ny,nz) -> (X,Y,Z)
-    # We'll convert (X,Y,Z) -> (Z,Y,X) by transpose (2,1,0). If array already (Z,Y,X) leave as-is.
-    # Decide by assuming physical Z extent often differs from X; but simplest: if arr[a-1] approx equals arr[0] pattern unknown.
-    # Use heuristic: if arr.shape[0] == arr.shape[2]: treat as cube and transpose to (Z,Y,X) (no-op either way)
-    # We'll check both and pick the version where 'reasonable' axis ordering holds: here prefer resulting shape matching common cryo sizes later.
-    # For simplicity, if arr.shape[0] != arr.shape[2]: assume arr is (X,Y,Z) and transpose -> (Z,Y,X)
     if arr.shape[0] != arr.shape[2]:
         return np.transpose(arr, (2, 1, 0))
     # cube case: still transpose to ensure consistent (Z,Y,X)
@@ -124,8 +115,7 @@ def visualize_results(phi_fn, step=None, cryoET_data=None):
 
 
 
-
-def visualize_checkpoint_level_set(ax, step, checkpoint, cryoET_data=None, grid_size=None, slice_index=32, axis="z", colorbar=False):
+def visualize_checkpoint_level_set(ax, step, checkpoint, data_mask=None, grid_size=None, slice_index=32, axis="z", colorbar=False):
     """
     Compute and visualize the level-set function from a given checkpoint.
     Uses voxel-based coordinates, consistent with `visualize_cryoET_with_contours`.
@@ -136,11 +126,11 @@ def visualize_checkpoint_level_set(ax, step, checkpoint, cryoET_data=None, grid_
     model = PINN()
     phi_fn = lambda x: model.apply(params, x)
 
-    Z_len = cryoET_data.shape[0]    
-    Y_len = cryoET_data.shape[1]    
-    X_len = cryoET_data.shape[2]
+    Z_len = data_mask.shape[0]    
+    Y_len = data_mask.shape[1]    
+    X_len = data_mask.shape[2]
 
-    phi_xyz, _, (x_axis, y_axis, z_axis) = phi_on_cryo_grid_xyz(phi_fn, cryoET_data.shape, lo=-1.0, hi=1.0)
+    phi_xyz, _, (x_axis, y_axis, z_axis) = phi_on_cryo_grid_xyz(phi_fn, data_mask.shape, lo=-1.0, hi=1.0)
     phi_zyx = _to_zyx(np.array(phi_xyz))
 
     # Extract selected slice and corresponding axis coords
@@ -203,43 +193,39 @@ def visualize_zyx_midslice(data, title=None):
     plt.show()
 
 
-
 def visualize_checkpoint_cryoET_with_contours(
-    ax, step, checkpoint, cryoET_data, slice_index=32, axis="z",
-    no_label=False, thre=False,
+    ax, step, checkpoint, data_mask, slice_index=32, axis="z",
+    no_label=False,
 ):
     state = checkpoint["state"]; params = state["params"]
     model = PINN()
     phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
 
     # Compute phi on cryo grid and ensure ordering (Z,Y,X)
-    phi_xyz, _, (x_axis, y_axis, z_axis) = phi_on_cryo_grid_xyz(phi_fn, cryoET_data.shape, lo=-1.0, hi=1.0)
+    phi_xyz, _, (x_axis, y_axis, z_axis) = phi_on_cryo_grid_xyz(phi_fn, data_mask.shape, lo=-1.0, hi=1.0)
     phi_zyx = _to_zyx(np.array(phi_xyz))
-
-    if thre:
-        cryoET_data = jnp.where(cryoET_data > thre, 1.0, 0.0)
 
     # axis coords from cryo shape
     # x_coords, y_coords, z_coords = _axis_coords_from_shape(cryoET_data.shape)
 
     if axis == "z":
-        cryo_slice = np.array(cryoET_data[int(slice_index)])   # (Y,X)
+        cryo_slice = np.array(data_mask[int(slice_index)])   # (Y,X)
         slice_phi  = phi_zyx[int(slice_index)]                 # (Y,X)
         col_axis, row_axis = x_axis, y_axis
         xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
-        N = cryoET_data.shape[2]
+        N = data_mask.shape[2]
     elif axis == "y":
-        cryo_slice = np.array(cryoET_data[:, int(slice_index), :])  # (Z,X)
+        cryo_slice = np.array(data_mask[:, int(slice_index), :])  # (Z,X)
         slice_phi  = phi_zyx[:, int(slice_index), :]                # (Z,X)
         col_axis, row_axis = x_axis, z_axis
         xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
-        N = cryoET_data.shape[0]
+        N = data_mask.shape[0]
     elif axis == "x":
-        cryo_slice = np.array(cryoET_data[:, :, int(slice_index)])  # (Z,Y)
+        cryo_slice = np.array(data_mask[:, :, int(slice_index)])  # (Z,Y)
         slice_phi  = phi_zyx[:, :, int(slice_index)]                # (Z,Y)
         col_axis, row_axis = y_axis, z_axis
         xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
-        N = cryoET_data.shape[0]
+        N = data_mask.shape[0]
 
     # CryoET colormap
     custom_gray = LinearSegmentedColormap.from_list('custom_gray', ['#f0f0f0', '#777777'])
@@ -276,8 +262,7 @@ def visualize_physics_loss(
     step=None,
     title=None,
     no_label=False,
-    cryoET_data=None,
-    threshold=0.8,
+    binary_mask=None,
     ):
     """
     Visualize the residual of the Allen-Cahn PDE:

@@ -12,6 +12,39 @@ from matplotlib.colors import LinearSegmentedColormap
 from typing import Tuple, Union
 import napari
 
+
+def visualize_zyx_midslice(data, title=None):
+    z, y, x = data.shape
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+    axes[0].imshow(data[int(z//2),:,:], cmap="gray", alpha=1.0)
+    axes[0].set_title(f"mid z ({int(z//2)}/{z})")
+    axes[1].imshow(data[:,int(y//2),:], cmap="gray", alpha=1.0)
+    axes[1].set_title(f"mid y ({int(y//2)}/{y})")
+    axes[2].imshow(data[:,:,int(x//2)], cmap="gray", alpha=1.0)
+    axes[2].set_title(f"mid x ({int(x//2)}/{x})")
+    if title:
+        plt.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
+def visualize_zyx_midslice_vs_overlay(data_ori, data_pred, title=None):
+    z, y, x = data_ori.shape
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3))
+    axes[0].imshow(data_ori[int(z//2),:,:], cmap="gray", alpha=1.0)
+    axes[0].imshow(data_pred[int(z//2),:,:], cmap="copper", alpha=0.3)
+    axes[0].set_title(f"mid z ({int(z//2)}/{z})")
+    axes[1].imshow(data_ori[:,int(y//2),:], cmap="gray", alpha=1.0)
+    axes[1].imshow(data_pred[:,int(y//2),:], cmap="copper", alpha=0.3)
+    axes[1].set_title(f"mid y ({int(y//2)}/{y})")
+    axes[2].imshow(data_ori[:,:,int(x//2)], cmap="gray", alpha=1.0)
+    axes[2].imshow(data_pred[:,:,int(x//2)], cmap="copper", alpha=0.3)
+    axes[2].set_title(f"mid x ({int(x//2)}/{x})")
+
+    if title:
+        plt.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
 def napari_view(data, mask):
     viewer = napari.Viewer()
     viewer.add_image(data, name='tomogram', colormap='gray', blending='additive')
@@ -44,7 +77,6 @@ def _axis_coords_from_shape(shape: Tuple[int, int, int]):
     y = np.linspace(-1, 1, Y)
     z = np.linspace(-1, 1, Z)
     return x, y, z
-
 
 def _to_zyx(arr: np.ndarray) -> np.ndarray:
     """Ensure array is ordered (Z, Y, X).
@@ -177,20 +209,6 @@ def visualize_checkpoint_level_set(ax, step, checkpoint, data_mask=None, grid_si
     ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{max(X_len, Y_len, Z_len)}")
 
     return img
-
-def visualize_zyx_midslice(data, title=None):
-    z, y, x = data.shape
-    fig, axes = plt.subplots(1, 3, figsize=(10, 3))
-    axes[0].imshow(data[int(z//2),:,:], cmap="gray", alpha=1.0)
-    axes[0].set_title(f"mid z ({int(z//2)}/{z})")
-    axes[1].imshow(data[:,int(y//2),:], cmap="gray", alpha=1.0)
-    axes[1].set_title(f"mid y ({int(y//2)}/{y})")
-    axes[2].imshow(data[:,:,int(x//2)], cmap="gray", alpha=1.0)
-    axes[2].set_title(f"mid x ({int(x//2)}/{x})")
-    if title:
-        plt.suptitle(title)
-    plt.tight_layout()
-    plt.show()
 
 
 def visualize_checkpoint_cryoET_with_contours(
@@ -453,10 +471,9 @@ def plot_3d_isosurface(ax, step, checkpoint, shape, no_label=False):
         level = 0.0
 
     # spacing for marching_cubes -> spacing = (dz, dy, dx) matching phi_zyx order
-    sp = (2.0 / float(Z_len), 2.0 / float(Y_len), 2.0 / float(X_len))
+    sp = (1.0, 1.0, 1.0)
 
     verts, faces, _, _ = marching_cubes(phi_zyx, level=level, spacing=sp)
-    verts -= 1.0
 
     mesh = Poly3DCollection(verts[faces], alpha=0.1, edgecolor="k", linewidth=0.2, facecolor="cyan")
     ax.add_collection3d(mesh)
@@ -487,20 +504,15 @@ def plot_3d_isosurface(ax, step, checkpoint, shape, no_label=False):
         ax.zaxis.line.set_color((1, 1, 1, 0))
 
         # Adjust camera angle & axis limits
-        limit_val = 0.6
-        ax.set_xlim(-limit_val, limit_val)
-        ax.set_ylim(-limit_val, limit_val)
-        # ax.set_zlim(-limit_val, limit_val)
-        ax.set_zlim(-0.5, 0.5)
+        ax.set_xlim(0, X_len)
+        ax.set_ylim(0, Y_len)
+        ax.set_zlim(0, Z_len)
 
     else:
         ax.set_title(f"Step {step}", fontsize=12, y=0.9)
-
-        # Adjust camera angle & axis limits
-        ax.view_init(elev=30, azim=45)  # Adjust view angle
-        ax.set_xlim(-1, 1)
-        ax.set_ylim(-1, 1)
-        ax.set_zlim(-1, 1)
+        ax.set_xlim(0, X_len)
+        ax.set_ylim(0, Y_len)
+        ax.set_zlim(0, Z_len)
 
     # Improve aesthetics
     ax.grid(False)  # Hide the default grid

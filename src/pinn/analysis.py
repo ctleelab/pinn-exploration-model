@@ -26,7 +26,6 @@ def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose
     if pred_mask.shape != gt_mask.shape:
         raise ValueError(f"Shape mismatch: pred {pred_mask.shape} vs gt {gt_mask.shape}")
     
-    # --- Dice ---
     intersection = np.count_nonzero(gt_mask & pred_mask)
     gt_sum = np.count_nonzero(gt_mask)
     pd_sum = np.count_nonzero(pred_mask)
@@ -76,6 +75,7 @@ def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose
 
     if verbose:
         print(f"intersection: {intersection}")
+        print(f"intersection/mask: {intersection / gt_sum}")
         print(f"gt: {gt_sum} / {gt_mask.size}")
         print(f"pd: {pd_sum} / {pred_mask.size}")
         print(f"volume_sum: {volume_sum}")

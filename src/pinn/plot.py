@@ -9,6 +9,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pinn.model import phase_volume, phase_surface
 from pinn.grid import phi_on_cryo_grid_xyz, axes_from_cryo_shape
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import ListedColormap
 from typing import Tuple, Union
 import napari
 
@@ -29,15 +30,16 @@ def visualize_zyx_midslice(data, title=None):
 
 def visualize_zyx_midslice_vs_overlay(data_ori, data_pred, title=None):
     z, y, x = data_ori.shape
+    cmap = ListedColormap([[0,0,0,0], [1,0,1,1]])
     fig, axes = plt.subplots(1, 3, figsize=(10, 3))
     axes[0].imshow(data_ori[int(z//2),:,:], cmap="gray", alpha=1.0)
-    axes[0].imshow(data_pred[int(z//2),:,:], cmap="copper", alpha=0.3)
+    axes[0].imshow(data_pred[int(z//2),:,:], cmap=cmap, alpha=0.5)
     axes[0].set_title(f"mid z ({int(z//2)}/{z})")
     axes[1].imshow(data_ori[:,int(y//2),:], cmap="gray", alpha=1.0)
-    axes[1].imshow(data_pred[:,int(y//2),:], cmap="copper", alpha=0.3)
+    axes[1].imshow(data_pred[:,int(y//2),:], cmap=cmap, alpha=0.5)
     axes[1].set_title(f"mid y ({int(y//2)}/{y})")
     axes[2].imshow(data_ori[:,:,int(x//2)], cmap="gray", alpha=1.0)
-    axes[2].imshow(data_pred[:,:,int(x//2)], cmap="copper", alpha=0.3)
+    axes[2].imshow(data_pred[:,:,int(x//2)], cmap=cmap, alpha=0.5)
     axes[2].set_title(f"mid x ({int(x//2)}/{x})")
 
     if title:
@@ -231,19 +233,19 @@ def visualize_checkpoint_cryoET_with_contours(
         slice_phi  = phi_zyx[int(slice_index)]                 # (Y,X)
         col_axis, row_axis = x_axis, y_axis
         xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
-        N = data_mask.shape[2]
+        N = data_mask.shape[0]
     elif axis == "y":
         cryo_slice = np.array(data_mask[:, int(slice_index), :])  # (Z,X)
         slice_phi  = phi_zyx[:, int(slice_index), :]                # (Z,X)
         col_axis, row_axis = x_axis, z_axis
         xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
-        N = data_mask.shape[0]
+        N = data_mask.shape[1]
     elif axis == "x":
         cryo_slice = np.array(data_mask[:, :, int(slice_index)])  # (Z,Y)
         slice_phi  = phi_zyx[:, :, int(slice_index)]                # (Z,Y)
         col_axis, row_axis = y_axis, z_axis
         xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
-        N = data_mask.shape[0]
+        N = data_mask.shape[2]
 
     # CryoET colormap
     custom_gray = LinearSegmentedColormap.from_list('custom_gray', ['#f0f0f0', '#777777'])

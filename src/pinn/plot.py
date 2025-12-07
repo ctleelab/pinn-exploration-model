@@ -13,6 +13,12 @@ from matplotlib.colors import ListedColormap
 from typing import Tuple, Union
 import napari
 
+def visualize_z_midslice(data_pred, ax, data_ori, title):
+    z, y, x = data_pred.shape
+    ax.imshow(data_ori[int(z//2),:,:], cmap="gray", alpha=1.0)
+    ax.contour(data_pred[int(z//2),:,:], levels=[0], colors="red", linewidths=2, alpha=0.3)
+    ax.set_title(title)
+    return ax
 
 def visualize_zyx_midslice(data, title=None):
     z, y, x = data.shape
@@ -28,18 +34,18 @@ def visualize_zyx_midslice(data, title=None):
     plt.tight_layout()
     plt.show()
 
-def visualize_zyx_midslice_vs_overlay(data_ori, data_pred, title=None):
+def visualize_zyx_midslice_vs_overlay(data_ori, data_pred, alpha=0.5, title=None):
     z, y, x = data_ori.shape
     cmap = ListedColormap([[0,0,0,0], [1,0,1,1]])
     fig, axes = plt.subplots(1, 3, figsize=(10, 3))
     axes[0].imshow(data_ori[int(z//2),:,:], cmap="gray", alpha=1.0)
-    axes[0].imshow(data_pred[int(z//2),:,:], cmap=cmap, alpha=0.5)
+    axes[0].imshow(data_pred[int(z//2),:,:], cmap=cmap, alpha=alpha)
     axes[0].set_title(f"mid z ({int(z//2)}/{z})")
     axes[1].imshow(data_ori[:,int(y//2),:], cmap="gray", alpha=1.0)
-    axes[1].imshow(data_pred[:,int(y//2),:], cmap=cmap, alpha=0.5)
+    axes[1].imshow(data_pred[:,int(y//2),:], cmap=cmap, alpha=alpha)
     axes[1].set_title(f"mid y ({int(y//2)}/{y})")
     axes[2].imshow(data_ori[:,:,int(x//2)], cmap="gray", alpha=1.0)
-    axes[2].imshow(data_pred[:,:,int(x//2)], cmap=cmap, alpha=0.5)
+    axes[2].imshow(data_pred[:,:,int(x//2)], cmap=cmap, alpha=alpha)
     axes[2].set_title(f"mid x ({int(x//2)}/{x})")
 
     if title:

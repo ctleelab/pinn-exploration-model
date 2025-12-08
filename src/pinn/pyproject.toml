@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pinn"
+
+authors = [{ name = "Atsushi Matsuda", email = "atsumat@uw.edu" }]
+description = ""
+requires-python = ">=3.9"
+version = "0.1.0"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["pinn"]

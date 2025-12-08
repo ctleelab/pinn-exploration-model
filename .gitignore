@@ -21,3 +21,8 @@ logs/
 data/
 # data/raw/
 # data/synthetic/
+
+# pixi environments
+*.egg-info
+.pixi/*
+!.pixi/config.toml

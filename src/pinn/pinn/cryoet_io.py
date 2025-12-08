@@ -101,7 +101,7 @@ def load_mrc_data(file_path, grid_size=64):
 
     # Resize if needed
     if mrc_data.shape != target_shape:
-        print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
+        # print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
         from skimage.transform import resize
         mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
         mrc_data = jnp.array(mrc_data)

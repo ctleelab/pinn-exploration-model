@@ -283,7 +283,6 @@ def visualize_physics_loss(
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
 
-    # Restore phi_fn from checkpoint if needed
     if checkpoint is not None:
         state = checkpoint["state"]
         params = state["params"]
@@ -408,9 +407,6 @@ def visualize_physics_loss(
 
 
 
-
-
-
 def plot_3d_isosurface(ax, step, checkpoint, grid_size=64, no_label=False):
     """
     Load a checkpoint, compute φ values, extract the isosurface, and plot it.
@@ -442,6 +438,7 @@ def plot_3d_isosurface(ax, step, checkpoint, grid_size=64, no_label=False):
 
     # Convert φ values from JAX to NumPy for visualization
     phi_values_np = np.array(phi_values)
+
 
     # Apply marching cubes to extract the isosurface
     verts, faces, _, _ = marching_cubes(phi_values_np, level=0, spacing=(2/grid_size, 2/grid_size, 2/grid_size))

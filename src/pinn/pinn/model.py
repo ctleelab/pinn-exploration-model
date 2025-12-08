@@ -6,6 +6,7 @@ import optax
 from flax.training import train_state
 
 GRID_SIZE = 64
+# GRID_SIZE = 128
 
 class PINN(nn.Module):
     # hidden_dim: int = 64  # Hidden layer size
@@ -130,7 +131,8 @@ def gaussian_curvature(phi_fn, x):
 # def loss_data(phi_fn, x, cryoET_data):
     # return jnp.mean((phi_fn(x.reshape(-1, 3)) - cryoET_data) ** 2)
 
-def loss_data(phi_fn, cryoET_data):
+# def loss_data(phi_fn, cryoET_data):
+def loss_data(phi_fn, cryoET_data, threshold=0.8):
 # def loss_data(phi_fn, cryoET_data, membrane_indices):
     """
     Compute loss by enforcing φ=0 where I=1 (membrane locations).
@@ -151,9 +153,8 @@ def loss_data(phi_fn, cryoET_data):
     # Compute the loss by enforcing φ=0 where cryoET_data is 1
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
 
-    binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
-    # binary_mask = jnp.where(cryoET_data > 0.7, 1, 0) 
-    # binary_mask = jnp.where(cryoET_data > 0.82, 1, 0)
+    # binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
+    binary_mask = jnp.where(cryoET_data > threshold, 1, 0) # original
     # binary_mask = cryoET_data
 
     # membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
@@ -164,7 +165,8 @@ def loss_data(phi_fn, cryoET_data):
     #     ((1 - binary_mask) * (phi ** 2 - 1.0) ** 2)       # penalize phi ≠ ±1 where mask = 0
     # )
 
-    weight_in = 0.8 # defalut
+    # weight_in = 0.8 # defalut
+    weight_in = 0.5
     inside_loss = jnp.sum(binary_mask * (phi - 0.0) ** 2) / jnp.sum(binary_mask)
     outside_loss = jnp.sum((1 - binary_mask) * (phi ** 2 - 1.0) ** 2) / jnp.sum(1 - binary_mask)
     membrane_loss = weight_in * inside_loss + (1 - weight_in) * outside_loss
@@ -257,22 +259,38 @@ def loss_data(phi_fn, cryoET_data):
 #     return jnp.mean(physics_residual**2)
 
 
-# New physics loss based on Allen-Cahn-like equation
 def loss_physics(phi_fn, x, epsilon = 0.05):
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     lap_phi = laplacian_phi(phi_fn, x)
-
     residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
-    # residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * (phi_vals**2 - 1)
-    # return (epsilon / 2) * jnp.mean(residual**2)
     return jnp.mean(residual**2)
+
+    # phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+    # grads = grad_phi(phi_fn, x)
+    # grads_sq = jnp.sum(grads**2, axis=-1)
+    # residual = grads_sq + (1 / 2 / epsilon**2) * (1 - phi_vals**2)**2
+    # return jnp.mean(residual)
+
+# def loss_physics(phi_fn, x, epsilon = 0.05):
+#     grads = grad_phi(phi_fn, x)
+#     residual  = jnp.sum(grads ** 2, axis=-1)
+#     return jnp.mean(residual)
+
+# def loss_physics(phi_fn, x, epsilon = 0.05):
+#     ## UNSTABLE
+#     kappa = mean_curvature(phi_fn, x)
+#     return jnp.mean(kappa**2)
+
+# def loss_physics(phi_fn, x, epsilon = 0.05):
+#     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
+#     lap_phi = laplacian_phi(phi_fn, x)
+#     residual = lap_phi
+#     return jnp.mean(residual)
 
 
 # Combined loss function
 def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
-# def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2, membrane_indices):
     return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
-    # return lambda_1 * loss_data(phi_fn, cryoET_data, membrane_indices) + lambda_2 * loss_physics(phi_fn, x)
 
 
 

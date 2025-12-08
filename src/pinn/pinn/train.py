@@ -11,6 +11,7 @@ from typing import NamedTuple
 class TrainState(train_state.TrainState):
     lambda_1: float  # Weight for loss_data
     lambda_2: float  # Weight for loss_physics
+    threshold: float # Threshold for data loss
 
 # # Initialize model and training state
 # def create_train_state(key, learning_rate=1e-3, lambda_1=100000.0, lambda_2=0.001):
@@ -136,14 +137,20 @@ def create_train_state(
     key, 
     learning_rate=1e-3, 
     lambda_1=100000.0, 
-    lambda_2=0.001, 
+    lambda_2=0.001,
+    threshold=0.8,
     sdf_pretrain=None, # "sphere" or "plane"
-    init_ckpt=None):
+    init_ckpt=None,
+    radius=None):
     """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
     model = PINN()  # Create model instance
     params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
 
     optimizer = optax.adam(learning_rate)  # Adam optimizer
+    # optimizer = optax.sgd(learning_rate)
+    # optimizer = optax.rmsprop(learning_rate)
+    # optimizer = optax.sgd(learning_rate, momentum=0.9)
+
 
     # Cosine Annealing Schedule
     # lr_sched = cosine_with_restarts(lr_max=5e-3, lr_min=1e-5, T0=1000, T_mult=1.0)
@@ -164,10 +171,11 @@ def create_train_state(
     # Perform SDF pretraining before training
     if sdf_pretrain is not None:
         print("Pretraining the network using SDF...")
-        grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain)
+        grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain, radius=radius)
 
         # Select random training points
         train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
+        # train_idx = np.random.choice(grid_points.shape[0], grid_points.shape[0], replace=False)
         x_train = grid_points[train_idx]
         y_train = sdf_initial.ravel()[train_idx]
 
@@ -176,8 +184,8 @@ def create_train_state(
     # Use pretrained network structure as initial condition
     if init_ckpt is not None:
         print("Use pretrained data as initial condition...")
-        params = init_ckpt["params"]
-        # params = init_ckpt['state']['params']
+        # params = init_ckpt["params"]
+        params = init_ckpt['state']['params']
 
 
     return TrainState(
@@ -187,7 +195,8 @@ def create_train_state(
         tx=optimizer,
         opt_state=optimizer.init(params),
         lambda_1=lambda_1,
-        lambda_2=lambda_2
+        lambda_2=lambda_2,
+        threshold=threshold
     ), model
 
 
@@ -232,10 +241,12 @@ def generate_sdf_ori(grid_size=64, radius=0.5, epsilon=0.05):
 
 def generate_sdf(
     grid_size=64,
-    kind="plane",                  # "sphere" or "plane"
-    radius=0.5,                     # used for sphere
+    kind="plane",                   # "sphere" or "plane" or "multi" or "uniform"
+    radius=None,                     # used for sphere
     epsilon=0.05,                   # smoothing width for tanh
 ):
+    if radius is None:
+        radius = 0.5
 
     # Coordinate grid in [-1, 1]^3
     x, y, z = jnp.meshgrid(
@@ -256,8 +267,11 @@ def generate_sdf(
         d1 = jnp.sqrt((x-0.5)**2 + y**2 + z**2) - 0.4
         d2 = jnp.sqrt((x+0.5)**2 + y**2 + z**2) - 0.4
         sdf_values = jnp.where(jnp.abs(d1) < jnp.abs(d2), d1, d2)
+    elif kind == "uniform":
+        sdf_values = jnp.ones_like(x)
+
     else:
-        raise ValueError("kind must be 'sphere' or 'plane'")
+        raise ValueError("kind must be 'sphere', 'plane', 'multi', or 'uniform'")
 
     sdf_values = -jnp.tanh(sdf_values/epsilon)
 
@@ -313,11 +327,9 @@ def train_step(state, x_train, cryoET_data):
 
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        loss_data_val = loss_data(phi_fn, cryoET_data)
-        # loss_data_val = loss_data(phi_fn, cryoET_data, membrane_indices)
+        loss_data_val = loss_data(phi_fn, cryoET_data, state.threshold)
         loss_physics_val = loss_physics(phi_fn, x_train)
         # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2)
-        # total_loss_val = total_loss(phi_fn, x_train, cryoET_data, state.lambda_1, state.lambda_2, membrane_indices)
         total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val
         return total_loss_val, (loss_data_val, loss_physics_val)
 

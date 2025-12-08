@@ -2,6 +2,8 @@ import sys
 sys.path.append('../src/pinn')
 sys.path.append('../src/data_generation')
 
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR)
 
 import jax
 import jax.numpy as jnp
@@ -13,33 +15,71 @@ from flax.training import checkpoints
 from pinn.utils import initial_loss
 from tqdm.notebook import trange
 
+# Configure JAX to use only the CPU
+# jax.config.update('jax_platform_name', 'cpu') 
+
+print('jax:', jax.__version__)      # 0.7.2
+print('devices:', jax.devices())    # [CudaDevice(id=0)]
+
+import jax.experimental.layout as _layout
+if not hasattr(_layout, 'DeviceLocalLayout'):
+        # Provide a minimal alias so orbax can import function annotations\n",
+        _layout.DeviceLocalLayout = _layout.Layout
+        print('Patched jax.experimental.layout.DeviceLocalLayout ->', getattr(_layout, 'DeviceLocalLayout'))
+
+
+# Utility function to convert GPU/JAX arrays to CPU/NumPy arrays
+def to_numpy(tree):
+    return jax.tree_util.tree_map(
+        lambda x: np.asarray(jax.device_get(x)) if isinstance(x, (jnp.ndarray, np.ndarray)) else x,
+        tree,
+    )
+def as_f32_scalar(x):
+    # Make sure to extract as a scalar (float32) even if it's an array/DeviceArray
+    return np.asarray(x, dtype=np.float32).reshape(()).item()
+
+
+
+#### PARAMETERS ####
 
 GRID_SIZE = 64
 NUM_CHECKPOINTS_TO_KEEP = 1000  # Checkpoint retention count (older ones get removed)
 
-
-
-# Parameters
 lambda_1 = 1000000
-# lambda_2_list = [0, 10, 100, 1000]
-# lambda_2_list = [40, 50, 60, 70]
-# lambda_2_list = [0, 10, 100, 1000]
-lambda_2_list = [0, 10]
-# lambda_2_list = [100, 1000]
+lambda_2_list = [0, 10, 100]
+
+
 shape = "multi"
-sdf_pretrain="multi"   # Initial condition ("sphere" or "plane")
+sdf_pretrain="multi"   # Initial condition ("sphere" or "plane" or "multi")
 flip_ratio=0.15
 # wedge_axis='y'
+# hetero_scale=3
+missing_ratio=0.7
+threshold=0.8
+
+flip_str = str(flip_ratio).replace('.', '')
+missing_str = str(missing_ratio).replace('.', '')
 
 num_collocation = 10000
-num_steps = 10000
+num_steps = 10000   # 10000
 save_interval = 100
+key = jax.random.PRNGKey(0)
+learning_rate = 1e-3  # 1e-3
+radius = 0.4
+data_version = "data_1115"
+# init_steps = 10000
 
 
 #### LOAD MRC DATA #####
 # mrc_file_path = f"../data/synthetic/{shape}.mrc"
-mrc_file_path = f"../data/synthetic/flip_noise/{shape}_f{str(flip_ratio).replace('.', '')}.mrc"
+# mrc_file_path = f"../data/synthetic/flip_noise/{shape}_f{str(flip_ratio).replace('.', '')}.mrc"
 # mrc_file_path = f"../data/synthetic/flip_noise/{shape}_f{str(flip_ratio).replace('.', '')}_w{wedge_axis}.mrc"
+# mrc_file_path = f"../data/synthetic/hetero/{shape}_h{hetero_scale}.mrc"
+# mrc_file_path = f"../data/synthetic/missing/{shape}_m{missing_str}.mrc"
+# mrc_file_path = f"../data/synthetic/additive/{shape}_f{flip_str}.mrc"
+mrc_file_path = f"../data/synthetic/combine/{shape}_a{flip_str}_m{missing_str}.mrc"
+
+
 print(f"Input file: {mrc_file_path}")
 
 cryoET_data = load_mrc_data(mrc_file_path, grid_size=GRID_SIZE)
@@ -49,20 +89,41 @@ print("Cryo-ET Data Min:", cryoET_data.min())
 print("Cryo-ET Data Max:", cryoET_data.max())
 print("Cryo-ET Unique Values:", jnp.unique(cryoET_data))
 
+x_train = (jax.random.uniform(key, (num_collocation, 3), minval=-1, maxval=1)) # Sampled from [-1, 1]^3
+
+
+# # Load initial checkpoint data
+# init_ckpt_dir= os.path.abspath(f"../outputs/logs/{shape}/{data_version}/a{flip_str}/init/lambda_{lambda_1}_0")
+# init_ckpt_path = os.path.join(init_ckpt_dir, f"checkpoint_{init_steps}")
+# init_ckpt = checkpoints.restore_checkpoint(ckpt_dir=init_ckpt_path, target=None)
 
 
 for lambda_2 in lambda_2_list:
 
-	key = jax.random.PRNGKey(0)
-	state, model = create_train_state(key, lambda_1=lambda_1, lambda_2=lambda_2, sdf_pretrain=sdf_pretrain, learning_rate=1e-3)
+	state, model = create_train_state(key, lambda_1=lambda_1, lambda_2=lambda_2, threshold=threshold, sdf_pretrain=sdf_pretrain, learning_rate=learning_rate, radius=radius)
+	# state, model = create_train_state(key, lambda_1=lambda_1, lambda_2=lambda_2, threshold = threshold, init_ckpt=init_ckpt, learning_rate=learning_rate, radius=radius)	
+	checkpoint_dir = os.path.abspath(f"../outputs/logs/{shape}/lambda_{lambda_1}_{lambda_2}")
 	print(f"Using lambda_1: {state.lambda_1}, lambda_2: {state.lambda_2}")
 
-	x_train = (jax.random.uniform(key, (num_collocation, 3), minval=-1, maxval=1)) # Sampled from [-1, 1]^3
-	checkpoint_dir = os.path.abspath(f"../outputs/logs/{shape}/lambda_{lambda_1}_{lambda_2}")
+
+	init_d = initial_loss(state, x_train, cryoET_data)     # Get the dictionary of initial losses
+	init_total = init_d.get("total_loss", init_d.get("total", init_d.get("loss", 0.0)))
+	init_data  = init_d.get("data_loss",  init_d.get("data",  0.0))
+	init_phys  = init_d.get("physics_loss", init_d.get("phys", init_d.get("physics", 0.0)))
+
+	payload0 = {
+	    "state": to_numpy(state),
+	    "loss": {
+	        "step":         np.asarray([0], dtype=np.int64),
+	        "total_loss":   np.asarray([as_f32_scalar(init_total)], dtype=np.float32),
+	        "data_loss":    np.asarray([as_f32_scalar(init_data)],  dtype=np.float32),
+	        "physics_loss": np.asarray([as_f32_scalar(init_phys)],  dtype=np.float32),
+	    }
+	}
 
 	checkpoints.save_checkpoint(
 	    ckpt_dir=checkpoint_dir,
-	    target={"state": state, "loss": initial_loss(state, x_train, cryoET_data)},
+	    target=payload0,
 	    step=0,
 	    overwrite=False,
 	    keep=NUM_CHECKPOINTS_TO_KEEP,
@@ -82,11 +143,21 @@ for lambda_2 in lambda_2_list:
 
 	    if (step+1) % save_interval == 0:
 
-	        loss_history = {key: np.array([entry[key] for entry in loss_history]) for key in loss_history[0].keys()}
+	        batched_loss = {
+	          	"step":         np.asarray([e["step"] for e in loss_history], dtype=np.int64),
+	        	"total_loss":   np.asarray([as_f32_scalar(e["total_loss"])   for e in loss_history], dtype=np.float32),
+	        	"data_loss":    np.asarray([as_f32_scalar(e["data_loss"])    for e in loss_history], dtype=np.float32),
+	        	"physics_loss": np.asarray([as_f32_scalar(e["physics_loss"]) for e in loss_history], dtype=np.float32),
+	        }
+
+	        payload = {
+	            "state": to_numpy(state),  # 항상 CPU NumPy로
+	            "loss":  batched_loss
+	        }
 	        
 	        checkpoints.save_checkpoint(
 	            ckpt_dir = checkpoint_dir,
-	            target={"state": state, "loss": loss_history},
+	            target=payload,
 	            step=step+1, 
 	            overwrite=False, 
 	            keep=NUM_CHECKPOINTS_TO_KEEP,

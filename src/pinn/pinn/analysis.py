@@ -207,7 +207,7 @@ def dice_loss(mrc_path, ckpt_dat, grid_size=64, threshold=0.8, band_thickness=0.
 
     phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
 
-    # Prediction membrane mask: band around phi=0
+    # # Prediction membrane mask: band around phi=0
     # pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
 
     # Prediction membrane mask: using marching cube
@@ -232,16 +232,84 @@ def dice_loss(mrc_path, ckpt_dat, grid_size=64, threshold=0.8, band_thickness=0.
     volume_sum = np.sum(gt_mask) + np.sum(pred_mask)
     dice = (2. * intersection) / (volume_sum + 1e-8)
 
-    print("intersection: ", intersection)
-    print("gt: ", np.sum(gt_mask))
-    print("pd: ", np.sum(pred_mask))
-    print("volume_sum: ", volume_sum)
+    # print("intersection: ", intersection)
+    # print("gt: ", np.sum(gt_mask))
+    # print("pd: ", np.sum(pred_mask))
+    # print("volume_sum: ", volume_sum)
 
     return 1 - dice   # Dice loss
 
 
+def surface_dice(
+    mrc_path, ckpt_dat, grid_size=64, thre_sklt = 0.8, 
+    threshold=0.8, band_thickness=0.05):
+    """
+    Compute surface Dice between ground-truth membrane (from MRC)
+    and predicted membrane (phi=0 contour).
+    
+    Args:
+        mrc_path (str): path to ground-truth .mrc file
+        ckpt_dat: checkpoint dict containing segmentation model state
+        grid_size (int): sampling resolution
+        thre_sklt (float): threshold for skeletnization
+        threshold (float): threshold for membrane mask
+        band_thickness (float): thickness around phi=0 for prediction mask
 
-def get_masks(mrc_path, dat_seg, grid_size=64, threshold=0.8, band_thickness=0.05):
+    Returns:
+        float: surface Dice loss (1 - Dice)
+    """
+    # --- Ground truth from MRC ---
+    gt_volume = load_mrc_data(mrc_path, grid_size=grid_size)
+    gt_sklt = (gt_volume > thre_sklt).astype(np.uint8)
+    gt_mask = (gt_volume > threshold).astype(np.uint8)
+
+    # --- Prediction from phi ---
+    state  = ckpt_dat["state"]
+    params = state["params"]
+    model  = PINN()
+    phi_fn = lambda x: model.apply(params, x)
+
+    # Sample voxel grid
+    x = np.linspace(-1, 1, grid_size)
+    y = np.linspace(-1, 1, grid_size)
+    z = np.linspace(-1, 1, grid_size)
+    grid = np.stack(np.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
+
+    phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
+
+    # Prediction membrane mask: band around phi=0
+    pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
+
+    # Prediction membrane mask: using marching cube
+    pitch = 2.0 / grid_size
+    phi_vals = np.array(phi_vals)
+    phi_vals = np.pad(phi_vals, 1, mode="edge")
+    verts, faces, _, _ = measure.marching_cubes(
+        phi_vals, level=0.0, spacing=(pitch, pitch, pitch)
+    )
+    verts = verts - 1.0 - pitch/2
+    mesh = trimesh.Trimesh(vertices=verts, faces=faces)  
+
+    pred_sklt = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
+    idx = ((verts + 1) / pitch).astype(int)  # map [-1,1] → [0, grid_size)
+    for v in idx:
+        if np.all((v >= 0) & (v < grid_size)):
+            pred_sklt[tuple(v)] = 1
+
+    # --- Dice calculation ---
+    precision = np.sum(pred_sklt * gt_mask) / np.sum(pred_sklt)
+    recall = np.sum(gt_sklt * pred_mask) / np.sum(gt_sklt)
+    dice = 2 * (precision * recall) / (precision + recall)
+
+    # print("gt_sklt: ", np.sum(gt_sklt))
+    # print("gt_mask: ", np.sum(gt_mask))
+    # print("pred_sklt: ", np.sum(pred_sklt))
+    # print("pred_mask: ", np.sum(pred_mask))
+
+    return 1 - dice
+
+
+def get_masks(mrc_path, dat_seg, grid_size=64, thre_sklt=0.8, threshold=0.8, band_thickness=0.05):
     """
     Generate ground-truth and predicted masks for Dice evaluation.
 
@@ -256,6 +324,7 @@ def get_masks(mrc_path, dat_seg, grid_size=64, threshold=0.8, band_thickness=0.0
     """
     # --- Ground truth from MRC (resized to grid_size) ---
     gt_volume = load_mrc_data(mrc_path, grid_size=grid_size)
+    gt_sklt = (gt_volume > thre_sklt).astype(np.uint8)
     gt_mask = (gt_volume > threshold).astype(np.uint8)
 
     # --- Prediction from φ ---
@@ -271,8 +340,8 @@ def get_masks(mrc_path, dat_seg, grid_size=64, threshold=0.8, band_thickness=0.0
 
     phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
 
-    # # mask using band_thickness
-    # pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
+    # mask using band_thickness
+    pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
 
     # mask using marching cube
     pitch = 2.0 / grid_size
@@ -284,13 +353,13 @@ def get_masks(mrc_path, dat_seg, grid_size=64, threshold=0.8, band_thickness=0.0
     verts = verts - 1.0 - pitch/2
     mesh = trimesh.Trimesh(vertices=verts, faces=faces)  
 
-    pred_mask = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
+    pred_sklt = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
     idx = ((verts + 1) / pitch).astype(int)  # map [-1,1] → [0, grid_size)
     for v in idx:
         if np.all((v >= 0) & (v < grid_size)):
-            pred_mask[tuple(v)] = 1
+            pred_sklt[tuple(v)] = 1
 
-    return gt_mask, pred_mask
+    return gt_mask, gt_sklt, pred_mask, pred_sklt
 
 
 

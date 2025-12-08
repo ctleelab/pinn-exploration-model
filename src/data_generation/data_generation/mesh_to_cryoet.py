@@ -102,7 +102,7 @@ def add_random_missing_data(volume, missing_ratio=0.3, seed=None):
     return volume_missing
 
 
-def add_random_noise(volume, flip_ratio=0.05, seed=None):
+def add_flip_noise(volume, flip_ratio=0.05, seed=None):
     """
     Randomly flip voxel values (0 to 1, or 1 to 0) to simulate noise.
     
@@ -125,6 +125,35 @@ def add_random_noise(volume, flip_ratio=0.05, seed=None):
     for idx in indices_to_flip:
         volume_noisy[tuple(idx)] = 1 - volume_noisy[tuple(idx)]  # Flip 0 <-> 1
     
+    return volume_noisy
+
+
+def add_random_noise(volume, flip_ratio=0.05, seed=None):
+    """
+    Randomly flip voxel values from 0 → 1 only (never 1 → 0) to simulate noise.
+    
+    Args:
+        volume (np.ndarray): The original voxel grid.
+        flip_ratio (float): Fraction of zero voxels to flip.
+        seed (int or None): Random seed for reproducibility.
+        
+    Returns:
+        np.ndarray: Voxel grid with added noise.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    volume_noisy = volume.copy()
+
+    # Find only zero voxels
+    zero_indices = np.argwhere(volume_noisy == 0)
+    num_to_flip = int(len(zero_indices) * flip_ratio)
+
+    if num_to_flip > 0:
+        selected = zero_indices[np.random.choice(len(zero_indices), num_to_flip, replace=False)]
+        for idx in selected:
+            volume_noisy[tuple(idx)] = 1  # Flip 0 → 1 only
+
     return volume_noisy
 
 
@@ -208,6 +237,67 @@ def apply_distance_transform(volume, max_distance=10):
     distance_map = np.clip(distance_map, 0, max_distance)
 
     return np.exp(-distance_map / 3)  # Simulate electron attenuation
+
+
+def apply_distance_transform_inhomogeneous(
+    volume,
+    max_distance=10,
+    decay_length=3.0,
+    min_intensity_factor=0.3,
+    heterogeneity_scale=3.0,
+    heterogeneity_thickness=2.0,
+    seed=0,
+):
+    """
+    Applies a distance transform to the voxel grid to simulate density,
+    with inhomogeneous membrane intensity (staining heterogeneity).
+
+    Args:
+        volume (np.ndarray): 3D voxel grid with membrane regions marked as 1.
+        max_distance (int): Maximum allowed distance for the transform.
+        decay_length (float): Length scale (in voxels) for exponential attenuation.
+        min_intensity_factor (float): Minimum relative intensity in the weakest
+            membrane regions (e.g., 0.3 means 30% of the strongest signal).
+        heterogeneity_scale (float): Gaussian smoothing sigma (in voxels) that
+            sets the patch size of heterogeneity.
+        heterogeneity_thickness (float): Distance (in voxels) from the membrane
+            within which heterogeneity is applied.
+        seed (int or None): Random seed for reproducibility.
+
+    Returns:
+        np.ndarray: Transformed intensity grid.
+    """
+    # 1) Clean up the binary mask a bit
+    volume_closed = scipy.ndimage.binary_closing(volume, structure=np.ones((2, 2, 2)))
+
+    # 2) Distance to membrane
+    distance_map = scipy.ndimage.distance_transform_edt(1 - volume_closed)
+    distance_map = np.clip(distance_map, 0, max_distance)
+
+    # 3) Base homogeneous intensity (like your original version)
+    base_intensity = np.exp(-distance_map / decay_length)
+
+    # 4) Build a smooth random field for heterogeneity
+    rng = np.random.default_rng(seed)
+    noise = rng.normal(size=volume.shape)
+    smooth_noise = scipy.ndimage.gaussian_filter(noise, sigma=heterogeneity_scale)
+
+    # Normalize to [0, 1]
+    smooth_noise -= smooth_noise.min()
+    denom = smooth_noise.max() if smooth_noise.max() > 0 else 1.0
+    smooth_noise /= denom
+
+    # Map to [min_intensity_factor, 1.0]
+    modulation = min_intensity_factor + (1.0 - min_intensity_factor) * smooth_noise
+
+    # 5) Apply heterogeneity only near the membrane
+    membrane_region = distance_map <= heterogeneity_thickness
+
+    intensity = base_intensity.copy()
+    intensity[membrane_region] *= modulation[membrane_region]
+
+    return intensity
+
 
 
 # def generate_pseudo_cryoet(
@@ -370,8 +460,11 @@ def generate_pseudo_cryoet(
     frame=-1,
     margin_ratio=0.4,
     gauss_noise=None,  # std of Gaussian noise. Set value given signal is 1. 
-    missing_wedge=True,
+    missing_wedge=False,
+    remove_edge=False,
     wedge_axis='z',
+    hetero_scale=None,
+    additive_noise=None,
 ):
     """
     Full pipeline to generate pseudo cryo-ET data from one or more membrane meshes.
@@ -412,14 +505,20 @@ def generate_pseudo_cryoet(
     if missing_ratio is not None:
         voxel_grid = add_random_missing_data(voxel_grid, missing_ratio=missing_ratio)
     if flip_ratio is not None:
-        voxel_grid = add_random_noise(voxel_grid, flip_ratio=flip_ratio)
+        voxel_grid = add_flip_noise(voxel_grid, flip_ratio=flip_ratio, seed=121)
+    if additive_noise is not None:
+        voxel_grid = add_random_noise(voxel_grid, flip_ratio=additive_noise, seed=121)
     if num_patch is not None and rad_patch is not None:
         voxel_grid = remove_random_voxel_patches(voxel_grid, num_patch=num_patch, rad_patch=rad_patch, seed=0)
     if gauss_noise is not None:
         voxel_grid = add_gaussian_noise(voxel_grid, std=gauss_noise)
 
     # Distance transform
-    pseudo_cryoET = apply_distance_transform(voxel_grid)
+    if hetero_scale == None:
+        pseudo_cryoET = apply_distance_transform(voxel_grid)
+    else:
+        pseudo_cryoET = apply_distance_transform_inhomogeneous(voxel_grid, heterogeneity_scale=hetero_scale)
+
     pseudo_cryoET = np.transpose(pseudo_cryoET, (2, 1, 0))  # Rotate Z-axis
 
     # Missing wedge effect
@@ -431,6 +530,9 @@ def generate_pseudo_cryoet(
 
     # Normalization
     pseudo_cryoET = pseudo_cryoET / pseudo_cryoET.max()    
+
+    if remove_edge == True:
+        pseudo_cryoET = pseudo_cryoET[2:-2, 2:-2, 2:-2]
 
 
     if output_file is not None:

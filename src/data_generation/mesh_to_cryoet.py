@@ -355,6 +355,24 @@ def apply_distance_transform_inhomogeneous(
 #     return pseudo_cryoET
 
 
+def rotate_vector(v: np.ndarray, axis: np.ndarray, angle_deg: float) -> np.ndarray:
+    """
+    Rotate vector v by angle (deg) around 'axis' using Rodrigues' formula.
+    All in (Z,Y,X) coordinates.
+    """
+    v = np.asarray(v, dtype=float)
+    k = np.asarray(axis, dtype=float)
+    k /= np.linalg.norm(k)
+
+    angle = np.deg2rad(angle_deg)
+    c = np.cos(angle)
+    s = np.sin(angle)
+
+    # Rodrigues' rotation: v_rot = v*c + (k × v)*s + k*(k·v)*(1 - c)
+    v_rot = v * c + np.cross(k, v) * s + k * np.dot(k, v) * (1.0 - c)
+    return v_rot / np.linalg.norm(v_rot)
+
+
 
 def remove_wedge(
     volume: np.ndarray,
@@ -460,11 +478,13 @@ def generate_pseudo_cryoet(
     frame=-1,
     margin_ratio=0.4,
     gauss_noise=None,  # std of Gaussian noise. Set value given signal is 1. 
-    missing_wedge=False,
     remove_edge=False,
-    wedge_axis='z',
     hetero_scale=None,
     additive_noise=None,
+    missing_wedge=False,
+    wedge_axis=None, # 'x','y','z'
+    axis_angle=None,
+    tilt_max=60,
 ):
     """
     Full pipeline to generate pseudo cryo-ET data from one or more membrane meshes.
@@ -523,7 +543,13 @@ def generate_pseudo_cryoet(
 
     # Missing wedge effect
     if missing_wedge is True:
-        pseudo_cryoET = remove_wedge(pseudo_cryoET, axis=wedge_axis)
+        if wedge_axis is not None:
+            pseudo_cryoET = remove_wedge(pseudo_cryoET, axis=wedge_axis)
+        else:
+            u0 = np.array([1.0, 0.0, 0.0])   # +Z in (Z,Y,X)
+            axis_rot = np.array([0.0, 1.0, 0.0])  # +Y
+            axis_vec = rotate_vector(u0, axis_rot, angle_deg=axis_angle)
+            pseudo_cryoET = remove_wedge(pseudo_cryoET, tilt_max_deg=tilt_max, axis=axis_vec)
 
     # Gaussian blur for realism
     pseudo_cryoET = scipy.ndimage.gaussian_filter(pseudo_cryoET, sigma=sigma)

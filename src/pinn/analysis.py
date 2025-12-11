@@ -35,9 +35,8 @@ def surface_dice_mask_vs_pred(
     and predicted membrane (phi=0 contour).
     Args:
         mrc_path (str): path to ground-truth .mrc file
-        ckpt_dat: checkpoint dict containing segmentation model state
-        grid_size (int): sampling resolution
-        thre_sklt (float): threshold for skeletnization
+        ckpt_dir: checkpoint directory
+        [ztop:zbottom]: z-slice numbers that you want to crop away
         threshold (float): threshold for membrane mask
         band_thickness (float): thickness around phi=0 for prediction mask
     Returns:

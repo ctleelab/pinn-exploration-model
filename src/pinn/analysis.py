@@ -7,6 +7,107 @@ import mrcfile
 from skimage import measure
 import trimesh
 import matplotlib.pyplot as plt
+from skimage.morphology import medial_axis
+from pinn.checkpoint_io import (
+    load_checkpoint_at_step
+)
+from pinn.plot import (
+    visualize_checkpoint_level_set,
+    visualize_checkpoint_cryoET_with_contours,
+    plot_3d_isosurface,
+    plot_loss_history_ax,
+    plot_normalized_loss_history_ax,
+    visualize_z_midslice,
+    visualize_zyx_midslice,
+    visualize_zyx_midslice_vs_overlay,
+    _to_zyx
+)
+from pinn.grid import (
+    phi_on_cryo_grid_xyz
+)
+from skimage.measure import marching_cubes
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+def surface_dice_mask_vs_pred(
+    mrc_path, checkpoint_dir, lambda_1, lambda_2, ztop=None, zbottom=None, step=1000, threshold=0.8, band_thickness=0.05):
+    """
+    Compute surface Dice between ground-truth membrane (from MRC)
+    and predicted membrane (phi=0 contour).
+    Args:
+        mrc_path (str): path to ground-truth .mrc file
+        ckpt_dat: checkpoint dict containing segmentation model state
+        grid_size (int): sampling resolution
+        thre_sklt (float): threshold for skeletnization
+        threshold (float): threshold for membrane mask
+        band_thickness (float): thickness around phi=0 for prediction mask
+    Returns:
+        float: surface Dice loss (1 - Dice)
+    """
+    # --- Ground truth from MRC ---
+    with mrcfile.open(mrc_path, permissive=True) as mrc:
+            gt_volume = mrc.data.astype(jnp.float32)
+    
+    gt_mask = (gt_volume > threshold).astype(np.uint8)
+    gt_sklt = np.copy(gt_mask)
+    for z in range(gt_sklt.shape[0]):
+        gt_sklt[z,:,:] = medial_axis(gt_mask[z,:,:])
+
+    # --- Prediction from phi ---
+    checkpoint_data = load_checkpoint_at_step(step, checkpoint_dir, lambda_1, lambda_2)
+    state = checkpoint_data["state"]; params = state["params"]
+    model = PINN()
+    phi_fn = lambda x: model.apply(params, x.reshape(-1, 3))
+
+    phi_xyz, _, _ = phi_on_cryo_grid_xyz(phi_fn, gt_mask.shape, lo=-1.0, hi=1.0)
+    phi_zyx = _to_zyx(np.array(phi_xyz))
+
+    # Prediction membrane mask: band around phi=0
+    pred_mask = (np.abs(phi_zyx) < band_thickness).astype(np.uint8)
+    
+    # Prediction membrane mask: using marching cube
+    Z, Y, X = gt_mask.shape
+    dz = 2.0 / Z
+    dy = 2.0 / Y
+    dx = 2.0 / X
+
+    phi_vals = np.array(phi_zyx, dtype=np.float32)
+    phi_vals = np.pad(phi_vals, 1, mode="edge")
+
+    verts, faces, _, _ = marching_cubes(phi_vals, level=0.0, spacing=(dz, dy, dx))
+
+    verts[:, 0] -= 1.0 + dz / 2.0   # z 좌표
+    verts[:, 1] -= 1.0 + dy / 2.0   # y 좌표
+    verts[:, 2] -= 1.0 + dx / 2.0   # x 좌표
+
+    iz = ((verts[:, 0] + 1.0) / dz).astype(int)
+    iy = ((verts[:, 1] + 1.0) / dy).astype(int)
+    ix = ((verts[:, 2] + 1.0) / dx).astype(int)
+
+    # mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+    pred_sklt = np.zeros_like(gt_mask, dtype=np.uint8)
+    valid = (
+        (iz >= 0) & (iz < Z) &
+        (iy >= 0) & (iy < Y) &
+        (ix >= 0) & (ix < X)
+    )
+    pred_sklt[iz[valid], iy[valid], ix[valid]] = 1
+
+    if ztop is not None and zbottom is not None:
+        pred_mask = pred_mask[ztop:zbottom,:,:]
+        pred_sklt = pred_sklt[ztop:zbottom,:,:]
+        gt_mask = gt_mask[ztop:zbottom,:,:]
+        gt_sklt = gt_sklt[ztop:zbottom,:,:]
+    
+    # visualize_zyx_midslice_vs_overlay(pred_mask, pred_sklt, title="pred mask vs pred sklt (pink)")
+    # visualize_zyx_midslice_vs_overlay(gt_mask, gt_sklt, title="gt mask vs gt sklt (pink)")
+    visualize_zyx_midslice_vs_overlay(pred_mask, gt_sklt, title="pred mask vs gt_sklt (pink)")
+    visualize_zyx_midslice_vs_overlay(gt_mask, pred_sklt, title="gt mask vs pred_sklt (pink)")
+
+    # --- Dice calculation ---
+    precision = np.sum(pred_sklt * gt_mask) / np.sum(pred_sklt)
+    recall = np.sum(gt_sklt * pred_mask) / np.sum(gt_sklt)
+    dice = 2 * (precision * recall) / (precision + recall)
+    return 1 - dice
 
 def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose=True):
     from pinn.grid import phi_on_cryo_grid_xyz
@@ -32,14 +133,12 @@ def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose
     volume_sum = gt_sum + pd_sum
     dice = (2.0 * intersection) / (volume_sum + 1e-8)
 
-    fig, axes = plt.subplots(3, 4, figsize=(12, 12))  # 4행 3열
+    fig, axes = plt.subplots(3, 4, figsize=(12, 12))
 
-    # 슬라이스 인덱스 계산
     x_indices = np.linspace(0, gt_mask.shape[2] - 1, 6, dtype=int)
     y_indices = np.linspace(0, gt_mask.shape[1] - 1, 6, dtype=int)
     z_indices = np.linspace(0, gt_mask.shape[0] - 1, 6, dtype=int)
 
-    # 각 방향별 슬라이스 시각화
     for i in range(1, 5):
         # Z-slice
         z = z_indices[i]
@@ -82,7 +181,6 @@ def dice_loss_pinn_vs_mask(mask_file_path, checkpoint, band=(-0.8, 0.8), verbose
         print(f"Dice: {dice:.6f}")
 
     return 1.0 - dice
-
 
 def calc_area_seg(ckpt_dat, epsilon, sampling, grid_size=64, num_point=10000):
 	

@@ -5,6 +5,28 @@ from scipy.ndimage import gaussian_filter
 import mrcfile
 import tifffile
 
+#----------------------
+#  Open / New mrcfile 
+#----------------------
+
+def open_mrc(file_path):
+    if file_path.endswith(".mrc"):
+        with mrcfile.open(file_path) as mrc:
+            data = mrc.data
+            print("Data shape:", mrc.data.shape)  # Dimensions of the data
+            print("Voxel size (angstroms):", mrc.voxel_size)  # Voxel size if available
+        return data.astype(jnp.float32)
+    elif file_path.endswith(".tif"):
+        data = tifffile.imread(file_path)
+        return data.astype(jnp.float32)
+    else:
+        raise Exception("[Error] File must end with .mrc or .tif")
+    return data.astype(jnp.float32)
+
+def save_mrc(file_path, data):
+    with mrcfile.new(file_path, overwrite=True) as mrc:
+        mrc.set_data(data.astype(np.float32))
+
 # Define a synthetic cryo-ET dataset where the membrane edge has higher intensity
 def generate_synthetic_cryoET(grid_size=64, radius=1.0, edge_thickness=0.05, noise_level=0.1):
     """Generate a synthetic cryo-ET image where the membrane boundary is highlighted."""
@@ -73,28 +95,6 @@ def plot_synthetic_cryoET(cryoET_data, grid_size=64):
     ax.set_yticklabels(tick_labels)
 
     plt.show()
-
-def open_raw_data(file_path):
-    if file_path.endswith(".mrc"):
-        with mrcfile.open(file_path) as mrc:
-            data = mrc.data
-            print("Data shape:", mrc.data.shape)  # Dimensions of the data
-            print("Voxel size (angstroms):", mrc.voxel_size)  # Voxel size if available
-            print("Map origin:", mrc.header.origin)  # Origin of the map
-            print("Pixel spacing:", mrc.voxel_size)  # Pixel spacing for each axis
-            print("Minimum and maximum density:", mrc.header.dmin, mrc.header.dmax)
-            print("Mean density:", mrc.header.dmean)
-
-            # Other specific header fields
-            print("Number of columns, rows, and sections:", mrc.header.nx, mrc.header.ny, mrc.header.nz)
-            print("Data mode:", mrc.header.mode)  # Data type (e.g., byte, float)
-            print("Cell dimensions (angstroms):", mrc.header.cella)  # Cell dimensions
-            print("Cell angles:", mrc.header.cellb)  # Cell angles
-    elif file_path.endswith(".tif"):
-        data = tifffile.imread(file_path)
-    else:
-        raise Exception("[Error] File must end with .mrc or .tif")
-    return data.astype(jnp.float32)
 
 # def load_mrc_data(file_path, grid_size=64):
 #     """

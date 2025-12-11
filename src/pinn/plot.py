@@ -12,6 +12,11 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.colors import ListedColormap
 from typing import Tuple, Union
 import napari
+from skimage.morphology import medial_axis
+
+# -----------------------
+# Visualize Slices
+# -----------------------
 
 def visualize_z_midslice(data_pred, ax, data_ori, title):
     z, y, x = data_pred.shape
@@ -53,11 +58,41 @@ def visualize_zyx_midslice_vs_overlay(data_ori, data_pred, alpha=0.5, title=None
     plt.tight_layout()
     plt.show()
 
+# ---------------------------------
+# Visualize with napari
+# ---------------------------------
+
 def napari_view(data, mask):
     viewer = napari.Viewer()
     viewer.add_image(data, name='tomogram', colormap='gray', blending='additive')
     if mask is not None:
         viewer.add_image(mask, name='mask', colormap='red', blending='additive', opacity=0.5)
+    napari.run()
+
+def napari_gradient(data):
+    mask = data.astype(np.float32)
+
+    # Calculate the center
+    z0, y0, x0 = np.array(mask.shape) / 2
+
+    # Calculate the distance from the center
+    zz, yy, xx = np.meshgrid(
+        np.arange(mask.shape[0]),
+        np.arange(mask.shape[1]),
+        np.arange(mask.shape[2]),
+        indexing="ij"
+    )
+
+    distance = np.sqrt((zz - z0)**2 + (yy - y0)**2 + (xx - x0)**2)
+
+    # Scale the distance: 0.2 ~ 1.0
+    distance_norm = 0.2 + 0.8 * (distance / distance.max())
+
+    # gradient mask 
+    gradient_mask = mask * distance_norm ** 2
+
+    viewer = napari.Viewer()
+    viewer.add_image(gradient_mask.astype(np.float32), name="Center-Distance Gradient", colormap="twilight", blending="translucent", opacity=0.5)
     napari.run()
 
 def _normalize_grid_shape(grid_size: Union[int, Tuple[int, int, int]], cryo_shape=None):

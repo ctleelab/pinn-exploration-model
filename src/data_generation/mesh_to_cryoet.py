@@ -3,7 +3,7 @@ import scipy.ndimage
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset
 from pathlib import Path
-import mrcfile
+import mask_data
 import trimesh
 from matplotlib.colors import LinearSegmentedColormap
 from scipy.ndimage import label, generate_binary_structure, binary_dilation
@@ -434,7 +434,7 @@ def generate_pseudo_cryoet(
 
 
     if output_file is not None:
-        with mrcfile.new(output_file, overwrite=True) as mrc:
+        with mask_data.new(output_file, overwrite=True) as mrc:
             mrc.set_data(pseudo_cryoET.astype(np.float32))
         print(f"Pseudo cryo-ET data saved to: {output_file}")
 

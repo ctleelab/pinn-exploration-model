@@ -45,14 +45,18 @@ NUM_CHECKPOINTS_TO_KEEP = 1000  # Checkpoint retention count
 
 lambda_1 = 1000000
 # lambda_2_list = [1, 10, 100, 1000, 10000, 100000]
-lambda_2_list = [0, 50]
+# lambda_2_list = [0, 50]
+lambda_2_list = [10, 30, 70]
 # lambda_2_list = [0, 10, 30, 50, 70]
-# shape_list = ["biconcave", "bud_04", "multi"]
-shape_list = ["bud_04", "biconcave"]
+shape_list = ["biconcave", "bud_04", "multi"]
+# shape_list = ["bud_04"]
 
-flip_ratio = 0.1
-axis_angle_list=[90, 60, 30, 0]
-tilt_max_list=[50, 60, 70, 80]
+flip_ratio = 0.15
+# axis_angle_list=[80, 70, 50, 40, 20, 10]
+axis_angle_list=[40]
+# tilt_max_list=[50, 60, 70, 80]
+tilt_max_list=[50]
+
 
 threshold=0.8
 

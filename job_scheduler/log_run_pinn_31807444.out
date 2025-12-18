@@ -1,0 +1,135 @@
+jax: 0.7.2
+devices: [CudaDevice(id=0)]
+Patched jax.experimental.layout.DeviceLocalLayout -> <class 'jax._src.layout.Layout'>
+Input file: ../data/synthetic/combine/multi_a005_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.058849126
+Cryo-ET Data Max: 0.94319975
+Cryo-ET Unique Values: [0.05884913 0.07451606 0.0803592  ... 0.9159166  0.9349806  0.94319975]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a007_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.06880878
+Cryo-ET Data Max: 0.9627047
+Cryo-ET Unique Values: [0.06880878 0.11773641 0.15197806 ... 0.9451308  0.95216584 0.9627047 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a009_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.086081274
+Cryo-ET Data Max: 0.9540152
+Cryo-ET Unique Values: [0.08608127 0.10246397 0.1128876  ... 0.9398856  0.95367545 0.9540152 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a011_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.095654786
+Cryo-ET Data Max: 0.9570091
+Cryo-ET Unique Values: [0.09565479 0.11501703 0.13146092 ... 0.9478211  0.9505036  0.9570091 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a013_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.090935946
+Cryo-ET Data Max: 0.9689657
+Cryo-ET Unique Values: [0.09093595 0.0946747  0.15403089 ... 0.9588036  0.9641342  0.9689657 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a015_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.11018424
+Cryo-ET Data Max: 0.9863868
+Cryo-ET Unique Values: [0.11018424 0.15005587 0.17857523 ... 0.9619913  0.9644512  0.9863868 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a017_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.12364574
+Cryo-ET Data Max: 0.986085
+Cryo-ET Unique Values: [0.12364574 0.17735499 0.19712156 ... 0.9720113  0.9750024  0.986085  ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a019_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.12503083
+Cryo-ET Data Max: 0.9851803
+Cryo-ET Unique Values: [0.12503083 0.21529935 0.22374508 ... 0.9766871  0.9787816  0.9851803 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a021_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.14768513
+Cryo-ET Data Max: 0.99179596
+Cryo-ET Unique Values: [0.14768513 0.16660495 0.17689201 ... 0.9834751  0.9899121  0.99179596]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a023_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.14013772
+Cryo-ET Data Max: 0.9923456
+Cryo-ET Unique Values: [0.14013772 0.15106486 0.16141024 ... 0.9922808  0.9922956  0.9923456 ]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Input file: ../data/synthetic/combine/multi_a025_m05.mrc
+MRC data loaded successfully! Shape: (64, 64, 64)
+Cryo-ET Data Shape: (64, 64, 64)
+Cryo-ET Data Min: 0.15088712
+Cryo-ET Data Max: 0.99432474
+Cryo-ET Unique Values: [0.15088712 0.19961327 0.20520279 ... 0.9935623  0.9943089  0.99432474]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 50
+  0%|          | 0/10000 [00:00<?, ?it/s]

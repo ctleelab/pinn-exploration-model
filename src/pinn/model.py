@@ -5,8 +5,8 @@ from jax import grad, jacfwd, jit, vmap
 import optax
 from flax.training import train_state
 
-GRID_SIZE = 64
-# GRID_SIZE = 128
+# GRID_SIZE = 64
+GRID_SIZE = 128
 
 class PINN(nn.Module):
     # hidden_dim: int = 64  # Hidden layer size
@@ -154,8 +154,8 @@ def loss_data(phi_fn, cryoET_data, threshold=0.8):
     # binary_mask = jnp.where(cryoET_data > 0.5, 1, 0)
 
     # binary_mask = jnp.where(cryoET_data > 0.8, 1, 0) # original
-    binary_mask = jnp.where(cryoET_data > threshold, 1, 0) # original
-    # binary_mask = cryoET_data
+    # binary_mask = jnp.where(cryoET_data > threshold, 1, 0) # original
+    binary_mask = cryoET_data
 
     # membrane_loss = jnp.mean((phi_fn(grid_points).reshape(GRID_SIZE, GRID_SIZE, GRID_SIZE) * binary_mask) ** 2)
 

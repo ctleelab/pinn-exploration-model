@@ -19,8 +19,10 @@ logs/
 
 # Ignore large data files (optional)
 data/
-# data/raw/
-# data/synthetic/
+data/raw/
+data/synthetic/
+
+outputs/
 
 # pixi environments
 *.egg-info

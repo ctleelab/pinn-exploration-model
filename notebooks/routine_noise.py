@@ -44,26 +44,26 @@ GRID_SIZE = 64
 NUM_CHECKPOINTS_TO_KEEP = 1000  # Checkpoint retention count
 
 lambda_1 = 1000000
-# lambda_2_list = [1, 10, 100, 1000, 10000, 100000]
 lambda_2_list = [0, 50]
-# lambda_2_list = [0, 10, 30, 50, 70]
-shape_list = ["biconcave", "bud_04", "multi"]
-# shape_list = ["multi"]
+# shape_list = ["biconcave", "bud_04", "multi"]
+# shape_list = ["biconcave", "bud_04"]
+shape_list = ["biconcave"]
 
-flip_list=[0.2]
-missing_list=[0.9]
-# flip_list=[0.15]
-# missing_list=[0.7]
+# flip_list=[0.06, 0.07, 0.08, 0.09, 0.11, 0.12, 0.13, 0.14]
+# flip_list=[0.17, 0.19, 0.21, 0.23, 0.25]
+flip_list=[0.05, 0.07, 0.09, 0.11, 0.13, 0.15, 0.17, 0.19, 0.21, 0.23, 0.25]
+# missing_list = [0.6, 0.7, 0.8, 0.9]
+missing_list = [0.5]
 
 threshold=0.8
 
 num_collocation = 10000
 num_steps = 10000   # 10000
-save_interval = 100
+save_interval = 5000  # 100
 key = jax.random.PRNGKey(0)
 learning_rate = 1e-3  # 1e-3
 data_version = "data_1115"
-# data_version = "data_1203"
+
 
 for flip_ratio in flip_list:
 	for missing_ratio in missing_list:

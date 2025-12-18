@@ -555,7 +555,7 @@ def generate_pseudo_cryoet(
     pseudo_cryoET = scipy.ndimage.gaussian_filter(pseudo_cryoET, sigma=sigma)
 
     # Normalization
-    pseudo_cryoET = pseudo_cryoET / pseudo_cryoET.max()    
+    pseudo_cryoET = pseudo_cryoET / pseudo_cryoET.max()
 
     if remove_edge == True:
         pseudo_cryoET = pseudo_cryoET[2:-2, 2:-2, 2:-2]

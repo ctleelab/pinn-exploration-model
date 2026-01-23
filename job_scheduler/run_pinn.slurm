@@ -7,8 +7,8 @@
 #SBATCH --account=biology
 #SBATCH --partition=ckpt
 #SBATCH --nodes=1
-#SBATCH --mem=100G
-#SBATCH --gpus-per-node=1
+#SBATCH --mem=200G
+#SBATCH --gpus-per-node=4
 #SBATCH --time=02:00:00
 
 #SBATCH --chdir=/gscratch/matsulab/sim/pinn-exploration-model/notebooks
@@ -24,5 +24,4 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate pinn-env
 export PYTHONPATH="${PYTHONPATH}:../src"
 
-# python routine_wedge.py
-python routine_noise.py
+python routine_sign.py

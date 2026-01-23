@@ -1,0 +1,6 @@
+jax: 0.7.2
+devices: [CudaDevice(id=0), CudaDevice(id=1), CudaDevice(id=2), CudaDevice(id=3)]
+Patched jax.experimental.layout.DeviceLocalLayout -> <class 'jax._src.layout.Layout'>
+Pretraining the network using SDF...
+Using lambda_1: 1000000, lambda_2: 0, lambda_3: 0, threshold: 0.8
+  0%|          | 0/10000 [00:00<?, ?it/s]

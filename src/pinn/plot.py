@@ -68,7 +68,7 @@ def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
 
 
 
-def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_size=64, slice_index=32, axis="z", colorbar=False):
+def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_size=64, slice_index=32, axis="z", colorbar=False, show_contour=True):
     """
     Compute and visualize the level-set function from a given checkpoint.
     Uses voxel-based coordinates, consistent with `visualize_cryoET_with_contours`.
@@ -123,8 +123,8 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
     #               extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()], alpha=alpha_mask)
 
     # **3. Overlay contour lines for φ=0**
-    contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors="black", linewidths=1.5)
-    # ax.clabel(contour, fmt="φ=0", colors="black")  # Label contour line
+    if show_contour is True:
+        contour = ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0], colors="black", linewidths=1.5)
 
     # Set axis labels
     ax.set_xlabel(xlabel)
@@ -279,7 +279,7 @@ def visualize_physics_loss(
     """
     assert (checkpoint is not None) or (phi_fn is not None), "Must provide either a checkpoint or an analytical phi_fn."
 
-    valid_components = ["phi", "data", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2", "tension"]
+    valid_components = ["phi", "phi2", "data", "residual", "laplacian", "nonlinear", "grad_x", "grad_y", "grad_z", "hess_xx", "hess_yy", "hess_zz", "grad_norm2", "tension"]
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
 
@@ -319,6 +319,8 @@ def visualize_physics_loss(
 
     if component == "phi":
         values = phi_vals
+    elif component == "phi2":
+        values = phi_vals**2
     elif component == "data":
         values = data_dot
     elif component == "residual":
@@ -380,6 +382,9 @@ def visualize_physics_loss(
 
         for spine in ax.spines.values():
             spine.set_visible(False)  # Remove border box
+
+        # if colorbar is True:
+        #     cbar = plt.colorbar(img, ax=ax, orientation="horizontal", shrink=0.6, pad=0)
     else:
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -550,6 +555,7 @@ def plot_loss_history_ax(ax, assembled_loss):
     # Plot the losses
     ax.plot(assembled_loss["step"], assembled_loss["data_loss"], label='Data Loss', marker='o', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["physics_loss"], label='Physics Loss', marker='s', linestyle='-')
+    ax.plot(assembled_loss["step"], assembled_loss["sign_loss"], label='Sign Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
 
     # Use log scale for better visualization (especially if physics loss is large)
@@ -649,6 +655,15 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.set_ylabel("Loss Value (scaled)")
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
+    elif id == 3:    # Plot 
+        ax.plot(assembled_loss["step"], total_loss_norm, marker='^', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Normalized Sign Loss")
+        ax.set_xlabel("Training Steps")
+        # ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value (scaled)")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
 
 def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V_0=None, A_0=None):
 
@@ -699,4 +714,178 @@ def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V
 
     # ax.legend()
     
+
+import numpy as np
+import jax.numpy as jnp
+from skimage.measure import marching_cubes
+import plotly.graph_objects as go
+
+
+def compute_isosurface_mesh_from_checkpoint(
+    checkpoint,
+    grid_size=64,
+    level=0.0,
+    transpose=True,
+):
+    # --- build normalized coordinate grid (-1 to 1) ---
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+
+    X, Y, Z = jnp.meshgrid(x, y, z, indexing="ij")
+    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+    # --- restore model params from checkpoint ---
+    model = PINN()
+    state = checkpoint["state"]
+    params = state["params"]
+
+    def phi_fn(xyz):
+        return model.apply(params, xyz.reshape(-1, 3))
+
+    # --- evaluate phi on grid ---
+    phi_values = phi_fn(grid_points).reshape(grid_size, grid_size, grid_size)
+    if transpose:
+        phi_values = phi_values.T
+
+    # IMPORTANT: make a *writeable* NumPy array
+    phi_np = np.array(phi_values, copy=True)  # guarantees writeable
+
+    # marching cubes spacing (keeping your convention)
+    spacing = (2 / grid_size, 2 / grid_size, 2 / grid_size)
+
+    verts, faces, _, _ = marching_cubes(phi_np, level=level, spacing=spacing)
+
+    # shift [0,2] -> [-1,1]
+    verts = verts - 1.0
+    return verts, faces
+
+# def show_isosurface_plotly(
+#     checkpoint,
+#     grid_size=64,
+#     level=0.0,
+#     opacity=0.2,
+#     transpose=True,
+#     show_axes=True,
+# ):
+#     verts, faces = compute_isosurface_mesh_from_checkpoint(
+#         checkpoint=checkpoint,
+#         grid_size=grid_size,
+#         level=level,
+#         transpose=transpose,
+#     )
+
+#     i, j, k = faces.T
+
+#     fig = go.Figure(
+#         data=[
+#             go.Mesh3d(
+#                 x=verts[:, 0],
+#                 y=verts[:, 1],
+#                 z=verts[:, 2],
+#                 i=i, j=j, k=k,
+#                 opacity=opacity,
+#             )
+#         ]
+#     )
+
+#     fig.update_layout(
+#         scene=dict(
+#             aspectmode="cube",
+#             xaxis=dict(visible=show_axes, range=[-1, 1]),
+#             yaxis=dict(visible=show_axes, range=[-1, 1]),
+#             zaxis=dict(visible=show_axes, range=[-1, 1]),
+#         ),
+#         margin=dict(l=0, r=0, t=30, b=0),
+#         title=f"Isosurface: level={level} | grid={grid_size}",
+#     )
+#     # fig.show()
+#     return fig
+
+
+def show_isosurface_plotly(
+    checkpoint,
+    grid_size=64,
+    level=0.0,
+    opacity=0.2,
+    transpose=True,
+    show_axes=True,
+    material="membrane",  # new
+):
+    verts, faces = compute_isosurface_mesh_from_checkpoint(
+        checkpoint=checkpoint,
+        grid_size=grid_size,
+        level=level,
+        transpose=transpose,
+    )
+
+    i, j, k = faces.T
+
+    # Material presets
+    materials = {
+        "membrane": dict(
+            ambient=0.15,
+            diffuse=0.9,
+            specular=0.3,
+            roughness=0.6,
+            fresnel=0.1,
+        ),
+        "glossy": dict(
+            ambient=0.1,
+            diffuse=0.7,
+            specular=0.8,
+            roughness=0.2,
+            fresnel=0.3,
+        ),
+        "clay": dict(
+            ambient=0.3,
+            diffuse=0.8,
+            specular=0.1,
+            roughness=0.9,
+            fresnel=0.0,
+        ),
+    }
+
+    fig = go.Figure(
+        data=[
+            go.Mesh3d(
+                x=verts[:, 0],
+                y=verts[:, 1],
+                z=verts[:, 2],
+                i=i, j=j, k=k,
+                opacity=opacity,
+                color="rgba(180, 190, 210, 1.0)",
+                flatshading=False,
+                lighting=materials[material],
+                lightposition=dict(x=1, y=1, z=2),
+            )
+        ]
+    )
+
+    # fig.update_layout(
+    #     scene=dict(
+    #         aspectmode="cube",
+    #         xaxis=dict(visible=show_axes, range=[-1, 1]),
+    #         yaxis=dict(visible=show_axes, range=[-1, 1]),
+    #         zaxis=dict(visible=show_axes, range=[-1, 1]),
+    #     ),
+    #     margin=dict(l=0, r=0, t=30, b=0),
+    #     title=f"Isosurface: level={level} | grid={grid_size}",
+    # )
+
+    fig.update_layout(
+        scene=dict(
+            aspectmode="cube",
+            xaxis=dict(visible=False, showbackground=False),
+            yaxis=dict(visible=False, showbackground=False),
+            zaxis=dict(visible=False, showbackground=False),
+            bgcolor="white",  # or "rgba(0,0,0,0)"
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+    )
+    
+
+    return fig
+
+
 

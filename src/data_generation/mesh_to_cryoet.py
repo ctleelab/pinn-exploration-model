@@ -621,48 +621,119 @@ def plot_single_slice(pseudo_cryoET, ax, axis='z', slice_index=None, thre=None, 
 
 
 
-def plot_multiple_slices(volume, axis='z', num_slices=5, thre=None):
+# def plot_multiple_slices(volume, axis='z', num_slices=5, thre=None):
+#     """
+#     Visualizes multiple slices of a 3D volume along the chosen axis.
+
+#     Parameters:
+#     - volume: 3D numpy array (pseudo cryo-ET data)
+#     - axis: 'x', 'y', or 'z' (direction of slicing)
+#     - num_slices: Number of slices to display (default: 5)
+#     """
+#     if axis not in ('x', 'y', 'z'):
+#         raise ValueError("Axis must be 'x', 'y', or 'z'.")
+
+#     if thre is not None:
+#         volume = np.where(volume > thre, 1, 0)
+
+#     # Get the dimension size for the chosen axis
+#     dim_size = volume.shape[{'x': 0, 'y': 1, 'z': 2}[axis]]
+
+#     # Choose evenly spaced slice indices
+#     slices = np.linspace(0, dim_size - 1, num_slices, dtype=int)
+
+#     # Create figure
+#     fig, axes = plt.subplots(1, num_slices, figsize=(15, 5))
+
+#     for i, idx in enumerate(slices):
+#         if axis == 'x':
+#             img = volume[idx, :, :]  # Slice along X-axis (YZ plane)
+#         elif axis == 'y':
+#             img = volume[:, idx, :]  # Slice along Y-axis (XZ plane)
+#         else:  # Default is Z-axis
+#             img = volume[:, :, idx]  # Slice along Z-axis (XY plane)
+
+#         custom_gray = LinearSegmentedColormap.from_list(
+#             'custom_gray', ['#f0f0f0', '#111111']  # light gray to dark gray
+#         )
+
+#         # axes[i].imshow(img, cmap='gray')
+#         # axes[i].imshow(img, cmap='gray_r')
+#         axes[i].imshow(img, cmap=custom_gray, vmin=0, vmax=1)
+#         axes[i].set_title(f"{axis.upper()}={idx}/{dim_size}")
+#         axes[i].axis('off')
+
+#     plt.show()
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+
+def plot_multiple_slices(
+    volume,
+    axis="z",
+    num_slices=5,
+    slices=None,
+    thre=None,
+):
     """
     Visualizes multiple slices of a 3D volume along the chosen axis.
 
-    Parameters:
-    - volume: 3D numpy array (pseudo cryo-ET data)
-    - axis: 'x', 'y', or 'z' (direction of slicing)
-    - num_slices: Number of slices to display (default: 5)
+    Parameters
+    ----------
+    volume : np.ndarray
+        3D array (e.g. cryo-ET volume).
+    axis : {'x','y','z'}
+        Direction of slicing.
+    num_slices : int
+        Number of evenly spaced slices (ignored if `slices` is provided).
+    slices : list or array-like, optional
+        Explicit slice indices to show (e.g. [26, 28, 30]).
+    thre : float, optional
+        If given, binarize volume: volume > thre → 1, else 0.
     """
-    if axis not in ('x', 'y', 'z'):
+    if axis not in ("x", "y", "z"):
         raise ValueError("Axis must be 'x', 'y', or 'z'.")
 
     if thre is not None:
         volume = np.where(volume > thre, 1, 0)
 
-    # Get the dimension size for the chosen axis
-    dim_size = volume.shape[{'x': 0, 'y': 1, 'z': 2}[axis]]
+    axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    dim = axis_to_dim[axis]
+    dim_size = volume.shape[dim]
 
-    # Choose evenly spaced slice indices
-    slices = np.linspace(0, dim_size - 1, num_slices, dtype=int)
+    # Determine slice indices
+    if slices is not None:
+        slices = np.asarray(slices, dtype=int)
+        if np.any((slices < 0) | (slices >= dim_size)):
+            raise ValueError(f"Slice indices must be in [0, {dim_size-1}]")
+    else:
+        slices = np.linspace(0, dim_size - 1, num_slices, dtype=int)
 
-    # Create figure
-    fig, axes = plt.subplots(1, num_slices, figsize=(15, 5))
+    n = len(slices)
 
-    for i, idx in enumerate(slices):
-        if axis == 'x':
-            img = volume[idx, :, :]  # Slice along X-axis (YZ plane)
-        elif axis == 'y':
-            img = volume[:, idx, :]  # Slice along Y-axis (XZ plane)
-        else:  # Default is Z-axis
-            img = volume[:, :, idx]  # Slice along Z-axis (XY plane)
+    fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
+    axes = axes[0]
 
-        custom_gray = LinearSegmentedColormap.from_list(
-            'custom_gray', ['#f0f0f0', '#111111']  # light gray to dark gray
-        )
+    custom_gray = LinearSegmentedColormap.from_list(
+        "custom_gray", ["#f0f0f0", "#111111"]
+    )
 
-        # axes[i].imshow(img, cmap='gray')
-        # axes[i].imshow(img, cmap='gray_r')
-        axes[i].imshow(img, cmap=custom_gray, vmin=0, vmax=1)
-        axes[i].set_title(f"{axis.upper()}={idx}/{dim_size}")
-        axes[i].axis('off')
+    for ax, idx in zip(axes, slices):
+        if axis == "x":
+            img = volume[idx, :, :]
+        elif axis == "y":
+            img = volume[:, idx, :]
+        else:
+            img = volume[:, :, idx]
 
+        ax.imshow(img, cmap=custom_gray, vmin=0, vmax=1)
+        ax.set_title(f"{axis.upper()} = {idx}/{dim_size}")
+        ax.axis("off")
+
+    plt.tight_layout()
     plt.show()
+
 
 

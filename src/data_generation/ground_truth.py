@@ -556,3 +556,418 @@ def visualize_continuous_slice(D, origin, spacing, eps, axis='z', index=None, n=
     _panel(E_, r"$\epsilon|\nabla\phi|^2 + \frac{1}{2\epsilon}(1-\phi^2)^2$", "energy density")
     _panel(R2_, r"$(\epsilon\Delta\phi - \frac{1}{\epsilon}(\phi^2-1)\phi)^2$", "residual²")
 
+
+import numpy as np
+from scipy import ndimage as ndi
+
+
+def volume_on_one_side(
+    membrane,
+    voxel_size=1.0,
+    side="inside",
+    connectivity=6,
+    close_holes=0,
+    return_masks=False,
+):
+    """
+    Compute volume on one side of a membrane in a binary 3D volume.
+
+    Parameters
+    ----------
+    membrane : (Z,Y,X) array
+        Binary volume: 1 = membrane, 0 = non-membrane.
+    voxel_size : float
+        Edge length of a voxel (same unit as desired volume output).
+    side : {"inside", "outside", "smaller", "larger"}
+        Which region's volume to return.
+    connectivity : {6, 26}
+        Neighborhood definition for connectivity.
+    close_holes : int
+        If >0, perform binary closing on membrane (in voxels) to seal small gaps.
+    return_masks : bool
+        If True, also return inside/outside masks.
+
+    Returns
+    -------
+    volume : float
+        Volume of selected side.
+    info : dict
+        Voxel counts and volumes.
+    masks : dict (optional)
+        Boolean masks for inside, outside, membrane.
+    """
+
+    membrane = np.asarray(membrane)
+    if membrane.ndim != 3:
+        raise ValueError("membrane must be a 3D array")
+
+    # Convert to boolean membrane
+    membrane = membrane.astype(bool)
+
+    # Optional: close small holes in membrane
+    if close_holes > 0:
+        struct = ndi.generate_binary_structure(3, 1)
+        struct = ndi.iterate_structure(struct, close_holes)
+        membrane = ndi.binary_closing(membrane, structure=struct)
+
+    free = ~membrane
+
+    # Connectivity
+    if connectivity == 6:
+        struct = ndi.generate_binary_structure(3, 1)
+    elif connectivity == 26:
+        struct = ndi.generate_binary_structure(3, 2)
+    else:
+        raise ValueError("connectivity must be 6 or 26")
+
+    # Boundary seeds (outside)
+    seeds = np.zeros_like(free, dtype=bool)
+    seeds[0, :, :]  |= free[0, :, :]
+    seeds[-1, :, :] |= free[-1, :, :]
+    seeds[:, 0, :]  |= free[:, 0, :]
+    seeds[:, -1, :] |= free[:, -1, :]
+    seeds[:, :, 0]  |= free[:, :, 0]
+    seeds[:, :, -1] |= free[:, :, -1]
+
+    # Flood fill
+    outside = ndi.binary_propagation(seeds, structure=struct, mask=free)
+    inside = free & (~outside)
+
+    # Volumes
+    v_voxel = voxel_size ** 3
+    n_inside = inside.sum()
+    n_outside = outside.sum()
+
+    vol_inside = n_inside * v_voxel
+    vol_outside = n_outside * v_voxel
+
+    if side == "inside":
+        volume = vol_inside
+    elif side == "outside":
+        volume = vol_outside
+    elif side == "smaller":
+        volume = min(vol_inside, vol_outside)
+    elif side == "larger":
+        volume = max(vol_inside, vol_outside)
+    else:
+        raise ValueError("side must be inside/outside/smaller/larger")
+
+    info = dict(
+        voxel_size=voxel_size,
+        voxel_volume=v_voxel,
+        n_inside=int(n_inside),
+        n_outside=int(n_outside),
+        vol_inside=vol_inside,
+        vol_outside=vol_outside,
+    )
+
+    if return_masks:
+        masks = {
+            "membrane": membrane,
+            "inside": inside,
+            "outside": outside,
+        }
+        return volume, info, masks
+
+    return volume, info
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def visualize_volume_slices(
+    membrane,
+    inside=None,
+    outside=None,
+    axis="z",
+    slice_index=None,
+    figsize=(12, 4),
+    show_legend=True,
+    alpha_membrane=0.8,
+    alpha_region=0.35,
+):
+    """
+    Visualize membrane + inside/outside regions on a single slice.
+
+    Parameters
+    ----------
+    membrane : (Z,Y,X) array-like
+        Binary membrane mask (1/True = membrane).
+    inside, outside : (Z,Y,X) bool arrays or None
+        Region masks from volume_on_one_side(..., return_masks=True).
+        If not provided, only membrane is shown.
+    axis : {"x","y","z"}
+        Slice axis.
+    slice_index : int or None
+        If None, uses middle slice.
+    figsize : tuple
+        Figure size.
+    show_legend : bool
+        Add legend.
+    alpha_membrane : float
+        Transparency for membrane overlay.
+    alpha_region : float
+        Transparency for inside/outside overlays.
+    """
+
+    membrane = np.asarray(membrane).astype(bool)
+    Z, Y, X = membrane.shape
+
+    if slice_index is None:
+        slice_index = {"z": Z // 2, "y": Y // 2, "x": X // 2}[axis]
+
+    def take_slice(arr):
+        if arr is None:
+            return None
+        arr = np.asarray(arr).astype(bool)
+        if axis == "z":
+            return arr[slice_index, :, :]
+        if axis == "y":
+            return arr[:, slice_index, :]
+        if axis == "x":
+            return arr[:, :, slice_index]
+        raise ValueError("axis must be one of {'x','y','z'}")
+
+    mem2 = take_slice(membrane)
+    in2  = take_slice(inside)
+    out2 = take_slice(outside)
+
+    fig, ax = plt.subplots(1, 3 if (inside is not None and outside is not None) else 1, figsize=figsize)
+
+    if not isinstance(ax, np.ndarray):
+        ax = np.array([ax])
+
+    # Panel 1: base (background) + overlays
+    ax0 = ax[0]
+    ax0.imshow(np.zeros_like(mem2, dtype=float), interpolation="nearest")
+    ax0.imshow(mem2.astype(float), alpha=alpha_membrane, interpolation="nearest")
+    if in2 is not None:
+        ax0.imshow(in2.astype(float), alpha=alpha_region, interpolation="nearest")
+    if out2 is not None:
+        ax0.imshow(out2.astype(float), alpha=alpha_region, interpolation="nearest")
+    ax0.set_title(f"Overlay (axis={axis}, slice={slice_index})")
+    ax0.axis("off")
+
+    # Panels 2–3: separate views if inside/outside exist
+    if inside is not None and outside is not None and len(ax) == 3:
+        ax1, ax2 = ax[1], ax[2]
+
+        ax1.imshow(in2.astype(float), interpolation="nearest")
+        ax1.imshow(mem2.astype(float), alpha=alpha_membrane, interpolation="nearest")
+        ax1.set_title("Inside + membrane")
+        ax1.axis("off")
+
+        ax2.imshow(out2.astype(float), interpolation="nearest")
+        ax2.imshow(mem2.astype(float), alpha=alpha_membrane, interpolation="nearest")
+        ax2.set_title("Outside + membrane")
+        ax2.axis("off")
+
+    if show_legend:
+        # Minimal legend using proxy artists
+        import matplotlib.patches as mpatches
+        patches = [mpatches.Patch(label="Membrane")]
+        if inside is not None:
+            patches.append(mpatches.Patch(label="Inside"))
+        if outside is not None:
+            patches.append(mpatches.Patch(label="Outside"))
+        ax0.legend(handles=patches, loc="upper right", frameon=True)
+
+    plt.tight_layout()
+    return fig, ax
+
+
+def visualize_volume_projections(
+    membrane,
+    inside=None,
+    outside=None,
+    figsize=(12, 4),
+):
+    """
+    Quick 3D-ish visualization via max-intensity projections (MIPs).
+    Shows XY, XZ, YZ projections.
+
+    membrane/inside/outside are boolean volumes.
+    """
+
+    def mip(vol, plane):
+        # plane: "xy" (z max), "xz" (y max), "yz" (x max)
+        if plane == "xy":
+            return vol.max(axis=0)
+        if plane == "xz":
+            return vol.max(axis=1)
+        if plane == "yz":
+            return vol.max(axis=2)
+        raise ValueError("plane must be xy/xz/yz")
+
+    membrane = np.asarray(membrane).astype(bool)
+    inside = None if inside is None else np.asarray(inside).astype(bool)
+    outside = None if outside is None else np.asarray(outside).astype(bool)
+
+    planes = ["xy", "xz", "yz"]
+    fig, axs = plt.subplots(1, 3, figsize=figsize)
+
+    for ax, p in zip(axs, planes):
+        base = np.zeros_like(mip(membrane, p), dtype=float)
+        ax.imshow(base, interpolation="nearest")
+
+        if outside is not None:
+            ax.imshow(mip(outside, p).astype(float), alpha=0.35, interpolation="nearest")
+        if inside is not None:
+            ax.imshow(mip(inside, p).astype(float), alpha=0.35, interpolation="nearest")
+
+        ax.imshow(mip(membrane, p).astype(float), alpha=0.8, interpolation="nearest")
+        ax.set_title(f"MIP {p.upper()}")
+        ax.axis("off")
+
+    plt.tight_layout()
+    return fig, axs
+
+
+import numpy as np
+from scipy import ndimage as ndi
+
+def add_boundary_wall(membrane_bool: np.ndarray, thickness: int = 1) -> np.ndarray:
+    """Force membrane=True on the volume boundary (and optionally a few layers in)."""
+    mem = membrane_bool.copy()
+    t = thickness
+    mem[:t, :, :] = True
+    mem[-t:, :, :] = True
+    mem[:, :t, :] = True
+    mem[:, -t:, :] = True
+    mem[:, :, :t] = True
+    mem[:, :, -t:] = True
+    return mem
+
+
+import numpy as np
+from scipy import ndimage as ndi
+
+
+def split_by_membrane_side(
+    membrane,
+    inside_face="xmin",
+    voxel_size=1.0,
+    connectivity=6,
+    close_holes=0,
+    include_membrane_in_inside=True,
+    return_masks=False,
+):
+    """
+    Partition space into two sides separated by a membrane, like 1D:
+      b b b b m b b b  ->  i i i i i o o o
+
+    Definition:
+      - Pick an 'inside' boundary face (e.g., xmin).
+      - Flood-fill free space (non-membrane) from that face without crossing membrane.
+      - Filled region = inside bulk. Remaining free space = outside bulk.
+      - Optionally assign membrane voxels to inside.
+
+    Parameters
+    ----------
+    membrane : (Z,Y,X) array-like
+        Binary mask: 1=True=membrane, 0=False=bulk/free.
+    inside_face : {"xmin","xmax","ymin","ymax","zmin","zmax"}
+        Which boundary face defines "inside".
+    voxel_size : float
+        Voxel edge length for volume calculation.
+    connectivity : {6, 26}
+        Neighborhood definition for flood-fill.
+    close_holes : int
+        If >0, binary closing radius (voxels) to seal small membrane gaps.
+    include_membrane_in_inside : bool
+        If True: inside = inside_bulk OR membrane.
+    return_masks : bool
+        If True, return masks dict.
+
+    Returns
+    -------
+    volumes : dict
+        {"inside": ..., "outside": ..., "membrane": ...} in voxel_size^3 units.
+    info : dict
+        voxel counts and settings
+    masks : dict (optional)
+        boolean arrays: inside, outside, membrane, inside_bulk, outside_bulk
+    """
+    mem = np.asarray(membrane).astype(bool)
+    if mem.ndim != 3:
+        raise ValueError("membrane must be a 3D array (Z,Y,X)")
+
+    # Optional: seal small holes so membrane acts more like a divider
+    if close_holes > 0:
+        s = ndi.generate_binary_structure(3, 1)
+        s = ndi.iterate_structure(s, close_holes)
+        mem = ndi.binary_closing(mem, structure=s)
+
+    free = ~mem
+
+    if connectivity == 6:
+        struct = ndi.generate_binary_structure(3, 1)
+    elif connectivity == 26:
+        struct = ndi.generate_binary_structure(3, 2)
+    else:
+        raise ValueError("connectivity must be 6 or 26")
+
+    seeds = np.zeros_like(free, dtype=bool)
+
+    # Seed only ONE face (this is the key difference from my earlier function!)
+    if inside_face == "xmin":
+        seeds[:, :, 0] = free[:, :, 0]
+    elif inside_face == "xmax":
+        seeds[:, :, -1] = free[:, :, -1]
+    elif inside_face == "ymin":
+        seeds[:, 0, :] = free[:, 0, :]
+    elif inside_face == "ymax":
+        seeds[:, -1, :] = free[:, -1, :]
+    elif inside_face == "zmin":
+        seeds[0, :, :] = free[0, :, :]
+    elif inside_face == "zmax":
+        seeds[-1, :, :] = free[-1, :, :]
+    else:
+        raise ValueError("inside_face must be xmin/xmax/ymin/ymax/zmin/zmax")
+
+    inside_bulk = ndi.binary_propagation(seeds, structure=struct, mask=free)
+    outside_bulk = free & (~inside_bulk)
+
+    if include_membrane_in_inside:
+        inside = inside_bulk | mem
+        outside = outside_bulk
+    else:
+        inside = inside_bulk
+        outside = outside_bulk
+
+    v_vox = float(voxel_size) ** 3
+
+    n_in = int(inside.sum())
+    n_out = int(outside.sum())
+    n_mem = int(mem.sum())
+
+    volumes = {
+        "inside": n_in * v_vox,
+        "outside": n_out * v_vox,
+        "membrane": n_mem * v_vox,
+    }
+    info = {
+        "inside_face": inside_face,
+        "connectivity": connectivity,
+        "close_holes": close_holes,
+        "include_membrane_in_inside": include_membrane_in_inside,
+        "voxel_size": float(voxel_size),
+        "n_inside": n_in,
+        "n_outside": n_out,
+        "n_membrane": n_mem,
+    }
+
+    if return_masks:
+        masks = {
+            "membrane": mem,
+            "inside": inside,
+            "outside": outside,
+            "inside_bulk": inside_bulk,
+            "outside_bulk": outside_bulk,
+        }
+        return volumes, info, masks
+
+    return volumes, info
+
+

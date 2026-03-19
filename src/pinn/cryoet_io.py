@@ -74,7 +74,7 @@ def plot_synthetic_cryoET(cryoET_data, grid_size=64):
     plt.show()
 
 
-def load_mrc_data(file_path, grid_size=64, clip=1.0):
+def load_mrc_data(file_path, grid_size=64, clip=1.0, normalize_mrc=True):
     """
     Loads a 3D cryo-ET membrane image from an MRC file and normalizes it.
     
@@ -88,11 +88,11 @@ def load_mrc_data(file_path, grid_size=64, clip=1.0):
     with mrcfile.open(file_path, permissive=True) as mrc:
         mrc_data = mrc.data.astype(jnp.float32)  # Convert to JAX-compatible float32
 
-    # Normalize intensity to [0,1]
-    mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
-
-    # Clip and rescale
-    mrc_data = np.minimum(mrc_data / clip, 1.0)
+    if normalize_mrc:
+        # Normalize intensity to [0,1]
+        mrc_data = (mrc_data - jnp.min(mrc_data)) / (jnp.max(mrc_data) - jnp.min(mrc_data))
+        # Clip and rescale
+        mrc_data = np.minimum(mrc_data / clip, 1.0)
 
     # Determine target shape
     if isinstance(grid_size, int):

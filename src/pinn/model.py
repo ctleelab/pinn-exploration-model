@@ -12,9 +12,9 @@ GRID_SIZE = 128
 class PINN(nn.Module):
     # hidden_dim: int = 64  # Hidden layer size
     # hidden_dim: int = 16  # Hidden layer size
-    hidden_dim: int = 256  # Hidden layer size
+    # hidden_dim: int = 256  # Hidden layer size
     # hidden_dim: int = 512  # Hidden layer size
-    # hidden_dim: int = 128  # Hidden layer size
+    hidden_dim: int = 128  # Hidden layer size
     # num_frequencies: int = 10 # Number of frequencies for positional encoding
 
     @nn.compact
@@ -40,9 +40,7 @@ class PINN(nn.Module):
 
         x = nn.Dense(1)(x)  # Output single scalar φ(x,y,z)
         x = nn.tanh(x)
-
-        # x = x/2.0 + 0.5
-
+        
         return x.squeeze()
 
 
@@ -108,10 +106,111 @@ def mean_curvature(phi_fn, x):
 
     div_n = vmap(divergence)(x.reshape(-1, 3))  # Apply to all points in batch
 
-    # jax.debug.print("Grad Phi Min/Max: {}/{}", gphi.min(), gphi.max())
-    # jax.debug.print("Normalized Grad Phi Min/Max: {}/{}", n.min(), n.max())
-    # jax.debug.print("Div(N) Min/Max: {}/{}", div_n.min(), div_n.max())
     return div_n.squeeze()  # Ensure scalar output per point
+
+
+
+import jax
+import jax.numpy as jnp
+from jax import vmap
+
+
+def calc_grad_s_H_point(
+    phi_fn,
+    x,
+    normal_eps=1e-8,
+    curvature_eps=1e-8,
+):
+    def phi_scalar(x_single):
+        return phi_fn(x_single[None, :]).reshape(())
+
+    grad_phi = jax.grad(phi_scalar)
+    hess_phi_fn = jax.jacfwd(grad_phi)
+
+    def mean_curvature(x_single):
+        g = grad_phi(x_single)                  # (3,)
+        Hphi = hess_phi_fn(x_single)            # (3,3)
+
+        g2 = jnp.dot(g, g)
+        Gsafe = jnp.sqrt(g2 + curvature_eps**2)
+
+        lap_phi = jnp.trace(Hphi)
+        gHg = jnp.dot(g, Hphi @ g)
+
+        kappa = lap_phi / Gsafe - gHg / (Gsafe**3)
+        return 0.5 * kappa
+
+    g = grad_phi(x)
+    g2 = jnp.dot(g, g)
+    gnorm = jnp.sqrt(g2 + normal_eps**2)
+    n = g / gnorm
+
+    grad_H = jax.grad(mean_curvature)(x)
+
+    P = jnp.eye(3, dtype=x.dtype) - jnp.outer(n, n)
+    grad_s_H = P @ grad_H
+    return grad_s_H
+
+
+def calc_grad_s_H(
+    phi_fn,
+    points,
+    normal_eps=1e-8,
+    curvature_eps=1e-8,
+):
+    fn = lambda x: calc_grad_s_H_point(
+        phi_fn,
+        x,
+        normal_eps=normal_eps,
+        curvature_eps=curvature_eps,
+    )
+    return vmap(fn)(points)
+
+
+import jax
+import jax.numpy as jnp
+
+
+def calc_delta_s_H(phi_fn, x, grad_threshold=1e-4):
+    """
+    Compute surface Laplacian of mean curvature, Δ_s H, at points x.
+
+    Parameters
+    ----------
+    phi_fn : callable
+        Takes (N,3) -> (N,) or (N,1)
+    x : array, shape (N,3)
+    grad_threshold : float
+        Threshold to avoid division/projection issues when ||grad phi|| is too small.
+
+    Returns
+    -------
+    delta_s_H : array, shape (N,)
+    """
+    def phi_scalar(x_single):
+        return phi_fn(x_single[None, :]).reshape(())
+
+    def grad_s_H_single(x_single):
+        return calc_grad_s_H(phi_fn, x_single[None, :]).reshape(3,)
+
+    # grad phi and unit normal
+    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)              # (N,3)
+    gnorm = jnp.linalg.norm(grad_phi, axis=1, keepdims=True) # (N,1)
+
+    n = grad_phi / jnp.clip(gnorm, a_min=grad_threshold)     # (N,3)
+
+    # Jacobian of grad_s_H: J_ij = ∂_j (grad_s_H)_i
+    jac_grad_s_H = jax.vmap(jax.jacfwd(grad_s_H_single))(x)  # (N,3,3)
+
+    # Surface projection P = I - n ⊗ n
+    I = jnp.eye(3, dtype=x.dtype)
+    P = I[None, :, :] - n[:, :, None] * n[:, None, :]        # (N,3,3)
+
+    # Δ_s H = tr(P @ J)
+    delta_s_H = jnp.einsum("nij,nji->n", P, jac_grad_s_H)
+
+    return delta_s_H
+
 
 # Compute Laplacian of mean curvature ΔH = ∇²H
 def laplacian_mean_curvature(phi_fn, x):
@@ -214,98 +313,87 @@ def loss_data_original(phi_fn, cryoET_data, threshold=0.8, epsilon=0.05):
 
 def loss_data(phi_fn, data_edge, epsilon=0.05):
     x = data_edge["points"]
-    y = data_edge["edge"]   # (1.0 on membrane and 0.0 on bulk)
+    y = data_edge["label"]   # (1.0 on membrane and 0.0 on bulk)
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     gradient = grad_phi(phi_fn, x)
     sq_grad = jnp.sum(gradient**2, axis=-1)
     energy_density = epsilon**2 * sq_grad + 0.5 * (phi_vals**2 - 1.0)**2
-    membrane_loss = jnp.mean((energy_density - y)**2)
-
-    return membrane_loss
+    return jnp.mean((energy_density - y)**2)
 
 
-# def loss_physics(phi_fn, x, eps=1e-2):
-#     phi = phi_fn(x)  # Evaluate φ(x)
-    
-#     # Compute physics terms
-#     H = mean_curvature(phi_fn, x)
-#     Delta_H = laplacian_mean_curvature(phi_fn, x)
-#     K = gaussian_curvature(phi_fn, x)
-
-#     # Residual from the Helfrich shape equation
-#     residual = Delta_H + 2 * H * (H**2 - K)
-
-#     # Mask: keep only points near the zero level set
-#     mask = jnp.abs(phi) < eps
-
-#     # Optional: avoid division by zero if no points in mask
-#     masked_residual = jnp.where(mask, residual, 0.0)
-#     normalization = jnp.maximum(mask.sum(), 1)
-
-#     return jnp.sum(masked_residual**2) / normalization
-
-# # Physics loss (enforces the Helfrich equation)
-# def loss_physics(phi_fn, x):
-#     H = mean_curvature(phi_fn, x)
-#     Delta_H = laplacian_mean_curvature(phi_fn, x)
-#     K = gaussian_curvature(phi_fn, x)
-
-#     physics_residual = H
-
-#     return jnp.mean(physics_residual**2)
-
-
-# # Physics loss
-# def loss_physics(phi_fn, x):
-#     H = mean_curvature(phi_fn, x)
-#     Delta_H = laplacian_mean_curvature(phi_fn, x)
-#     K = gaussian_curvature(phi_fn, x)
-#     physics_residual = Delta_H + 2 * H * (H**2 - K)
-
-#     return jnp.mean(physics_residual**2)
-
-
-def loss_physics(phi_fn, x, epsilon = 0.05):
+def loss_phys(phi_fn, data_phys, epsilon = 0.05):
+    x = data_phys["points"]
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     lap_phi = laplacian_phi(phi_fn, x)
     residual = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
     return jnp.mean(residual**2)
 
-    # phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
-    # grads = grad_phi(phi_fn, x)
-    # grads_sq = jnp.sum(grads**2, axis=-1)
-    # residual = grads_sq + (1 / 2 / epsilon**2) * (1 - phi_vals**2)**2
-    # return jnp.mean(residual)
-
-# def loss_physics(phi_fn, x, epsilon = 0.05):
-#     grads = grad_phi(phi_fn, x)
-#     residual  = jnp.sum(grads ** 2, axis=-1)
-#     return jnp.mean(residual)
-
-# def loss_physics(phi_fn, x, epsilon = 0.05):
-#     ## UNSTABLE
-#     kappa = mean_curvature(phi_fn, x)
-#     return jnp.mean(kappa**2)
-
-# def loss_physics(phi_fn, x, epsilon = 0.05):
-#     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
-#     lap_phi = laplacian_phi(phi_fn, x)
-#     residual = lap_phi
-#     return jnp.mean(residual)
-
 
 def loss_sign(phi_fn, data_sign):
     x = data_sign["points"]
-    y = data_sign["sign"]
+    y = data_sign["label"]  # (+1.0 or -1.0)
     phi_vals = vmap(lambda x_i: phi_fn(jnp.atleast_2d(x_i)).squeeze())(x)
     residual = phi_vals - y
     return jnp.mean(residual**2)
 
 
+# def loss_curv(phi_fn, data_curv):
+#     x = data_curv["points"]              # (N,3)
+#     grad_s_H = calc_grad_s_H(phi_fn, x)  # (N,3)
+#     residual = jnp.sum(grad_s_H**2, axis=1)
+#     return jnp.mean(residual)
+
+def loss_curv(phi_fn, data_curv, grad_threshold=1e-4):
+    x = data_curv["points"]                      # (N,3)
+    grad_s_H = calc_grad_s_H(phi_fn, x)         # (N,3)
+
+    def phi_scalar(x_single):
+        return phi_fn(x_single[None, :]).reshape(())
+
+    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)
+    gnorm = jnp.linalg.norm(grad_phi, axis=1)
+
+    finite_mask = jnp.all(jnp.isfinite(grad_s_H), axis=1)
+    grad_mask = gnorm > grad_threshold
+    valid_mask = finite_mask & grad_mask
+
+    grad_s_H_safe = jnp.where(jnp.isfinite(grad_s_H), grad_s_H, 0.0)
+    residual = jnp.sum(grad_s_H_safe**2, axis=1)
+
+    n_valid = jnp.sum(valid_mask)
+    loss = jnp.where(n_valid > 0, jnp.sum(residual * valid_mask) / n_valid, 0.0)
+
+    jax.debug.print("valid curvature points = {} / {}", n_valid, x.shape[0])
+    return loss
+
+
+def loss_delta_curv(phi_fn, data_curv, grad_threshold=1e-4):
+    x = data_curv["points"]                                # (N,3)
+    delta_s_H = calc_delta_s_H(phi_fn, x, grad_threshold) # (N,)
+
+    def phi_scalar(x_single):
+        return phi_fn(x_single[None, :]).reshape(())
+
+    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)
+    gnorm = jnp.linalg.norm(grad_phi, axis=1)
+
+    finite_mask = jnp.isfinite(delta_s_H)
+    grad_mask = gnorm > grad_threshold
+    valid_mask = finite_mask & grad_mask
+
+    delta_s_H_safe = jnp.where(jnp.isfinite(delta_s_H), delta_s_H, 0.0)
+    residual = delta_s_H_safe**2
+
+    n_valid = jnp.sum(valid_mask)
+    loss = jnp.where(n_valid > 0, jnp.sum(residual * valid_mask) / n_valid, 0.0)
+
+    jax.debug.print("valid delta_s_H points = {} / {}", n_valid, x.shape[0])
+    return loss
+
+
 # Combined loss function
 def total_loss(phi_fn, x, cryoET_data, lambda_1, lambda_2):
     return lambda_1 * loss_data(phi_fn, cryoET_data) + lambda_2 * loss_physics(phi_fn, x)
-
 
 
 def phase_volume(phi_fn, x, V_box=8): # volume
@@ -340,3 +428,465 @@ def phase_bend(phi_fn, x, epsilon, kappa, V_box=8): # bending energy
     return bend
 
 
+
+
+
+
+
+
+
+import jax
+import jax.numpy as jnp
+from jax import vmap
+
+
+def debug_grad_s_H_point(phi_fn, x, normal_eps=1e-8, curvature_eps=1e-8):
+    def phi_scalar(x_single):
+        return phi_fn(jnp.atleast_2d(x_single)).squeeze()
+
+    g = jax.grad(phi_scalar)(x)                    # (3,)
+    g2 = jnp.dot(g, g)
+    gnorm = jnp.sqrt(g2 + normal_eps**2)
+    n = g / gnorm
+
+    hess_phi = jax.hessian(phi_scalar)(x)          # (3,3)
+    lap_phi = jnp.trace(hess_phi)
+    gHg = jnp.dot(g, hess_phi @ g)
+
+    Gsafe = jnp.sqrt(g2 + curvature_eps**2)
+    kappa = lap_phi / Gsafe - gHg / (Gsafe**3)
+    H = 0.5 * kappa
+
+    def H_scalar(x_single):
+        g_ = jax.grad(phi_scalar)(x_single)
+        hess_ = jax.hessian(phi_scalar)(x_single)
+        g2_ = jnp.dot(g_, g_)
+        Gsafe_ = jnp.sqrt(g2_ + curvature_eps**2)
+        lap_ = jnp.trace(hess_)
+        gHg_ = jnp.dot(g_, hess_ @ g_)
+        return 0.5 * (lap_ / Gsafe_ - gHg_ / (Gsafe_**3))
+
+    grad_H = jax.grad(H_scalar)(x)
+    P = jnp.eye(3) - jnp.outer(n, n)
+    grad_s_H = P @ grad_H
+
+    return {
+        "phi": phi_scalar(x),
+        "g": g,
+        "g2": g2,
+        "gnorm": gnorm,
+        "n": n,
+        "hess_phi": hess_phi,
+        "lap_phi": lap_phi,
+        "gHg": gHg,
+        "H": H,
+        "grad_H": grad_H,
+        "grad_s_H": grad_s_H,
+    }
+
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+
+
+def find_bad_points_from_calc_grad_s_H(phi_fn, data_curv, n_check=None):
+    points = jnp.asarray(data_curv["points"])
+    if n_check is None:
+        n_check = points.shape[0]
+    points = points[:n_check]
+
+    grad_s_H = calc_grad_s_H(phi_fn, points)
+    grad_s_H_np = np.asarray(jax.device_get(grad_s_H))
+
+    finite_mask = np.all(np.isfinite(grad_s_H_np), axis=1)
+    n_bad = np.sum(~finite_mask)
+
+    print(f"Number of bad points: {n_bad} / {points.shape[0]}")
+
+    if n_bad == 0:
+        print(f"No bad points found in first {points.shape[0]} points.")
+        return []
+
+    first_bad = int(np.where(~finite_mask)[0][0])
+    print("First bad index:", first_bad)
+    print("First bad point:", np.asarray(points[first_bad]))
+    print("First bad grad_s_H:", grad_s_H_np[first_bad])
+
+    return [{
+        "index": first_bad,
+        "point": np.asarray(points[first_bad]),
+        "grad_s_H": grad_s_H_np[first_bad],
+    }]
+
+
+import numpy as np
+import jax.numpy as jnp
+
+def find_bad_points(phi_fn, data_curv, n_check=None, normal_eps=1e-6, curvature_eps=1e-6):
+    points = data_curv["points"]
+    if n_check is None:
+        n_check = len(points)
+
+    bad_list = []
+
+    for i in range(min(n_check, len(points))):
+        x = points[i]
+        try:
+            out = debug_grad_s_H_point(
+                phi_fn,
+                x,
+                normal_eps=normal_eps,
+                curvature_eps=curvature_eps,
+            )
+
+            finite_dict = {
+                k: np.all(np.isfinite(np.asarray(v)))
+                for k, v in out.items()
+            }
+
+            if not all(finite_dict.values()):
+                bad_list.append({
+                    "index": i,
+                    "point": np.asarray(x),
+                    "finite_dict": finite_dict,
+                    "out": out,
+                })
+                print(f"Bad point found at index {i}")
+                print("point =", x)
+                print("finite_dict =", finite_dict)
+                break
+
+        except Exception as e:
+            bad_list.append({
+                "index": i,
+                "point": np.asarray(x),
+                "exception": repr(e),
+            })
+            print(f"Exception at index {i}")
+            print("point =", x)
+            print("exception =", repr(e))
+            break
+
+    if len(bad_list) == 0:
+        print(f"No bad points found in first {min(n_check, len(points))} points.")
+
+    return bad_list
+
+
+
+
+
+
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+
+
+def make_phi_scalar(phi_fn):
+    def phi_scalar(x):
+        return phi_fn(x[None, :]).squeeze()
+    return phi_scalar
+
+
+def make_H_scalar(phi_fn, curvature_eps=1e-8):
+    phi_scalar = make_phi_scalar(phi_fn)
+    grad_phi = jax.grad(phi_scalar)
+    hess_phi = jax.jacfwd(grad_phi)
+
+    def H_scalar(x):
+        g = grad_phi(x)                  # (3,)
+        Hphi = hess_phi(x)               # (3,3)
+        g2 = jnp.dot(g, g)
+        Gsafe = jnp.sqrt(g2 + curvature_eps**2)
+        lap_phi = jnp.trace(Hphi)
+        gHg = jnp.dot(g, Hphi @ g)
+        kappa = lap_phi / Gsafe - gHg / (Gsafe**3)
+        return 0.5 * kappa
+
+    return H_scalar
+
+
+def make_screen_point_fn(phi_fn, normal_eps=1e-8, curvature_eps=1e-8):
+    """
+    Cheap-ish screening function:
+    checks finiteness of the main geometric quantities, including grad_s_H,
+    but returns only a boolean mask and a few compact flags.
+    """
+    phi_scalar = make_phi_scalar(phi_fn)
+    grad_phi = jax.grad(phi_scalar)
+    hess_phi = jax.jacfwd(grad_phi)
+    H_scalar = make_H_scalar(phi_fn, curvature_eps=curvature_eps)
+    grad_H_fn = jax.grad(H_scalar)
+
+    def screen_point(x):
+        phi = phi_scalar(x)
+
+        g = grad_phi(x)
+        g2 = jnp.dot(g, g)
+        gnorm = jnp.sqrt(g2 + normal_eps**2)
+        n = g / gnorm
+
+        Hphi = hess_phi(x)
+        lap_phi = jnp.trace(Hphi)
+        gHg = jnp.dot(g, Hphi @ g)
+
+        H = H_scalar(x)
+        grad_H = grad_H_fn(x)
+        P = jnp.eye(3, dtype=x.dtype) - jnp.outer(n, n)
+        grad_s_H = P @ grad_H
+
+        finite_phi = jnp.all(jnp.isfinite(phi))
+        finite_g = jnp.all(jnp.isfinite(g))
+        finite_n = jnp.all(jnp.isfinite(n))
+        finite_hess = jnp.all(jnp.isfinite(Hphi))
+        finite_lap = jnp.all(jnp.isfinite(lap_phi))
+        finite_gHg = jnp.all(jnp.isfinite(gHg))
+        finite_H = jnp.all(jnp.isfinite(H))
+        finite_grad_H = jnp.all(jnp.isfinite(grad_H))
+        finite_grad_s_H = jnp.all(jnp.isfinite(grad_s_H))
+
+        all_finite = (
+            finite_phi
+            & finite_g
+            & finite_n
+            & finite_hess
+            & finite_lap
+            & finite_gHg
+            & finite_H
+            & finite_grad_H
+            & finite_grad_s_H
+        )
+
+        flags = jnp.array([
+            finite_phi,
+            finite_g,
+            finite_n,
+            finite_hess,
+            finite_lap,
+            finite_gHg,
+            finite_H,
+            finite_grad_H,
+            finite_grad_s_H,
+        ], dtype=jnp.bool_)
+
+        return all_finite, flags
+
+    return jax.jit(jax.vmap(screen_point))
+
+
+def make_debug_point_fn(phi_fn, normal_eps=1e-8, curvature_eps=1e-8):
+    """
+    Full debug output for a single point.
+    Use only after you already know which point is bad.
+    """
+    phi_scalar = make_phi_scalar(phi_fn)
+    grad_phi = jax.grad(phi_scalar)
+    hess_phi = jax.jacfwd(grad_phi)
+    H_scalar = make_H_scalar(phi_fn, curvature_eps=curvature_eps)
+    grad_H_fn = jax.grad(H_scalar)
+
+    @jax.jit
+    def debug_point(x):
+        phi = phi_scalar(x)
+
+        g = grad_phi(x)
+        g2 = jnp.dot(g, g)
+        gnorm = jnp.sqrt(g2 + normal_eps**2)
+        n = g / gnorm
+
+        Hphi = hess_phi(x)
+        lap_phi = jnp.trace(Hphi)
+        gHg = jnp.dot(g, Hphi @ g)
+
+        H = H_scalar(x)
+        grad_H = grad_H_fn(x)
+        P = jnp.eye(3, dtype=x.dtype) - jnp.outer(n, n)
+        grad_s_H = P @ grad_H
+
+        return {
+            "phi": phi,
+            "g": g,
+            "g2": g2,
+            "gnorm": gnorm,
+            "n": n,
+            "hess_phi": Hphi,
+            "lap_phi": lap_phi,
+            "gHg": gHg,
+            "H": H,
+            "grad_H": grad_H,
+            "grad_s_H": grad_s_H,
+        }
+
+    return debug_point
+
+
+def find_bad_points_fast(phi_fn, data_curv, n_check=None, normal_eps=1e-6, curvature_eps=1e-6):
+    points = jnp.asarray(data_curv["points"])
+    if n_check is None:
+        n_check = points.shape[0]
+    points = points[:n_check]
+
+    screen_fn = make_screen_point_fn(
+        phi_fn,
+        normal_eps=normal_eps,
+        curvature_eps=curvature_eps,
+    )
+    debug_fn = make_debug_point_fn(
+        phi_fn,
+        normal_eps=normal_eps,
+        curvature_eps=curvature_eps,
+    )
+
+    try:
+        all_finite_mask, flags = screen_fn(points)
+        all_finite_mask = np.asarray(all_finite_mask)
+        flags = np.asarray(flags)
+
+        bad_idx = np.where(~all_finite_mask)[0]
+
+        if len(bad_idx) == 0:
+            print(f"No bad points found in first {points.shape[0]} points.")
+            return []
+
+        i = int(bad_idx[0])
+        x = points[i]
+
+        out = debug_fn(x)
+        out_np = jax.tree_util.tree_map(lambda v: np.asarray(v), out)
+
+        names = [
+            "phi",
+            "g",
+            "n",
+            "hess_phi",
+            "lap_phi",
+            "gHg",
+            "H",
+            "grad_H",
+            "grad_s_H",
+        ]
+        finite_dict = {name: bool(flags[i, k]) for k, name in enumerate(names)}
+
+        bad_list = [{
+            "index": i,
+            "point": np.asarray(x),
+            "finite_dict": finite_dict,
+            "out": out_np,
+        }]
+
+        print(f"Bad point found at index {i}")
+        print("point =", np.asarray(x))
+        print("finite_dict =", finite_dict)
+
+        return bad_list
+
+    except Exception as e:
+        # fallback: if batched execution itself fails, locate the first exception point-by-point
+        debug_fn = make_debug_point_fn(
+            phi_fn,
+            normal_eps=normal_eps,
+            curvature_eps=curvature_eps,
+        )
+
+        for i in range(points.shape[0]):
+            x = points[i]
+            try:
+                out = debug_fn(x)
+                out_np = jax.tree_util.tree_map(lambda v: np.asarray(v), out)
+                finite_dict = {
+                    k: np.all(np.isfinite(v))
+                    for k, v in out_np.items()
+                }
+                if not all(finite_dict.values()):
+                    bad_list = [{
+                        "index": i,
+                        "point": np.asarray(x),
+                        "finite_dict": finite_dict,
+                        "out": out_np,
+                    }]
+                    print(f"Bad point found at index {i}")
+                    print("point =", np.asarray(x))
+                    print("finite_dict =", finite_dict)
+                    return bad_list
+            except Exception as e_single:
+                bad_list = [{
+                    "index": i,
+                    "point": np.asarray(x),
+                    "exception": repr(e_single),
+                }]
+                print(f"Exception at index {i}")
+                print("point =", np.asarray(x))
+                print("exception =", repr(e_single))
+                return bad_list
+
+        print(f"No bad points found in first {points.shape[0]} points.")
+        return []
+
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+
+def debug_bad_point(phi_fn, x, normal_eps=1e-6, curvature_eps=1e-6):
+    x = jnp.asarray(x)
+
+    def phi_scalar(x_single):
+        return phi_fn(x_single[None, :]).squeeze()
+
+    grad_phi = jax.grad(phi_scalar)
+    hess_phi_fn = jax.jacfwd(grad_phi)
+
+    phi = phi_scalar(x)
+    g = grad_phi(x)
+    g2 = jnp.dot(g, g)
+    gnorm = jnp.sqrt(g2 + normal_eps**2)
+    n = g / gnorm
+
+    Hphi = hess_phi_fn(x)
+    lap_phi = jnp.trace(Hphi)
+    gHg = jnp.dot(g, Hphi @ g)
+
+    Gsafe = jnp.sqrt(g2 + curvature_eps**2)
+    kappa = lap_phi / Gsafe - gHg / (Gsafe**3)
+    H = 0.5 * kappa
+
+    def H_scalar(x_single):
+        g_ = grad_phi(x_single)
+        Hphi_ = hess_phi_fn(x_single)
+        g2_ = jnp.dot(g_, g_)
+        Gsafe_ = jnp.sqrt(g2_ + curvature_eps**2)
+        lap_ = jnp.trace(Hphi_)
+        gHg_ = jnp.dot(g_, Hphi_ @ g_)
+        return 0.5 * (lap_ / Gsafe_ - gHg_ / (Gsafe_**3))
+
+    grad_H = jax.grad(H_scalar)(x)
+    P = jnp.eye(3, dtype=x.dtype) - jnp.outer(n, n)
+    grad_s_H = P @ grad_H
+
+    out = {
+        "phi": phi,
+        "g": g,
+        "g2": g2,
+        "gnorm": gnorm,
+        "n": n,
+        "Hphi": Hphi,
+        "lap_phi": lap_phi,
+        "gHg": gHg,
+        "Gsafe": Gsafe,
+        "H": H,
+        "grad_H": grad_H,
+        "P": P,
+        "grad_s_H": grad_s_H,
+    }
+
+    out_np = {k: np.asarray(jax.device_get(v)) for k, v in out.items()}
+
+    for k, v in out_np.items():
+        finite = np.all(np.isfinite(v))
+        vmax = np.max(np.abs(v)) if np.size(v) else 0.0
+        print(f"{k:10s} finite={finite}  maxabs={vmax}")
+        print(v)
+
+    return out_np

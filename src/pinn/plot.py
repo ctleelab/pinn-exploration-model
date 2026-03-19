@@ -8,6 +8,7 @@ from skimage.measure import marching_cubes
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from pinn.model import phase_volume, phase_surface
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.lines import Line2D
 
 def visualize_results(phi_fn, grid_size=64, step=None, cryoET_data=None):
     """
@@ -149,7 +150,7 @@ def visualize_checkpoint_result(ax, step, checkpoint, cryoET_data=None, grid_siz
 
 
 
-def visualize_cryoET_with_contours(
+def visualize_cryoET_with_contours_heavy(
     ax, 
     step, 
     checkpoint, 
@@ -255,6 +256,110 @@ def visualize_cryoET_with_contours(
 
 
 
+
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
+
+def visualize_cryoET_with_contours(
+    ax,
+    step,
+    checkpoint,
+    cryoET_data,
+    grid_size=64,
+    slice_index=32,
+    axis="z",
+    no_label=False,
+    thresholding=False,
+    expand_xy=None,   # <-- add this
+):
+    state = checkpoint["state"]
+    params = state["params"]
+    model = PINN()
+
+    @jax.jit
+    def phi_batched(x):  # (N,3) -> (N,) or (N,1)
+        out = model.apply(params, x)
+        return out.reshape(-1)
+
+    # ---- your “other function” mechanism, copied faithfully ----
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+    if expand_xy is not None:
+        x = jnp.linspace(-1, 1, grid_size)
+        y = jnp.linspace(-expand_xy, expand_xy, grid_size)
+        z = jnp.linspace(-expand_xy, expand_xy, grid_size)
+    # -----------------------------------------------------------
+
+    # Slice coordinate comes from the axis you are slicing along
+    if axis == "z":
+        s = z[slice_index]
+        X, Y = jnp.meshgrid(x, y, indexing="ij")
+        pts = jnp.stack([X.ravel(), Y.ravel(), jnp.full(X.size, s)], axis=-1)
+        contour_x, contour_y = X, Y
+        cryoET_numpy = np.array(cryoET_data[:, :, slice_index])
+        extent = [x.min(), x.max(), y.min(), y.max()]
+        xlabel, ylabel = "X-axis (voxels)", "Y-axis (voxels)"
+
+    elif axis == "y":
+        s = y[slice_index]
+        X, Z = jnp.meshgrid(x, z, indexing="ij")
+        pts = jnp.stack([X.ravel(), jnp.full(X.size, s), Z.ravel()], axis=-1)
+        contour_x, contour_y = X, Z
+        cryoET_numpy = np.array(cryoET_data[:, slice_index, :])
+        extent = [x.min(), x.max(), z.min(), z.max()]
+        xlabel, ylabel = "X-axis (voxels)", "Z-axis (voxels)"
+
+    elif axis == "x":
+        s = x[slice_index]
+        Y, Z = jnp.meshgrid(y, z, indexing="ij")
+        pts = jnp.stack([jnp.full(Y.size, s), Y.ravel(), Z.ravel()], axis=-1)
+        contour_x, contour_y = Y, Z
+        cryoET_numpy = np.array(cryoET_data[slice_index, :, :])
+        extent = [y.min(), y.max(), z.min(), z.max()]
+        xlabel, ylabel = "Y-axis (voxels)", "Z-axis (voxels)"
+
+    else:
+        raise ValueError("axis must be one of {'x','y','z'}")
+
+    # Evaluate phi only on slice (grid_size^2 points)
+    slice_data = phi_batched(pts).reshape(grid_size, grid_size)
+
+    if thresholding:
+        cryoET_numpy = np.where(cryoET_numpy > 0.8, 1.0, 0.0)
+
+    # Plot CryoET grayscale image with matching extent
+    custom_gray = LinearSegmentedColormap.from_list("custom_gray", ["#f0f0f0", "#777777"])
+    ax.imshow(cryoET_numpy, cmap=custom_gray, origin="lower", extent=extent, alpha=1.0)
+
+    # Overlay φ=0 contour
+    ax.contour(contour_x.T, contour_y.T, slice_data, levels=[0.0], colors="red", linewidths=2.0)
+
+    if no_label:
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticklabels([]); ax.set_yticklabels([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    else:
+        ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+
+        # Note: these tick labels are “voxel index” labels; with expand_xy they no longer
+        # correspond to physical coords. If you want physical ticks, we can adjust.
+        tick_positions_x = np.linspace(float(extent[0]), float(extent[1]), num=5)
+        tick_positions_y = np.linspace(float(extent[2]), float(extent[3]), num=5)
+        tick_labels = np.linspace(0, grid_size - 1, num=5).astype(int)
+
+        ax.set_xticks(tick_positions_x); ax.set_xticklabels(tick_labels)
+        ax.set_yticks(tick_positions_y); ax.set_yticklabels(tick_labels)
+
+        ax.set_title(f"Step {step}, {axis}-slice={slice_index}/{grid_size}")
+
+
+
+
 def visualize_physics_loss(
     ax, 
     epsilon, 
@@ -346,7 +451,7 @@ def visualize_physics_loss(
     elif component == "tension":
         values = areadist
 
-    if component is not "phi":
+    if component != "phi":
         values = jnp.abs(values)
     values = values.reshape(grid_size, grid_size, grid_size)
 
@@ -409,7 +514,6 @@ def visualize_physics_loss(
 
 
     return img
-
 
 
 def plot_3d_isosurface(ax, step, checkpoint, grid_size=64, no_label=False):
@@ -554,7 +658,7 @@ def plot_loss_history_ax(ax, assembled_loss):
     
     # Plot the losses
     ax.plot(assembled_loss["step"], assembled_loss["data_loss"], label='Data Loss', marker='o', linestyle='-')
-    ax.plot(assembled_loss["step"], assembled_loss["physics_loss"], label='Physics Loss', marker='s', linestyle='-')
+    ax.plot(assembled_loss["step"], assembled_loss["phys_loss"], label='Physics Loss', marker='s', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["sign_loss"], label='Sign Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
 
@@ -624,7 +728,8 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
 
     # Normalize loss values by their initial step=0 value
     data_loss_norm = assembled_loss["data_loss"] / assembled_loss["data_loss"][0]
-    physics_loss_norm = assembled_loss["physics_loss"] / assembled_loss["physics_loss"][0]
+    sign_loss_norm = assembled_loss["sign_loss"] / assembled_loss["sign_loss"][0]
+    phys_loss_norm = assembled_loss["phys_loss"] / assembled_loss["phys_loss"][0]
     total_loss_norm = assembled_loss["total_loss"] / assembled_loss["total_loss"][0]
 
 
@@ -638,7 +743,7 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
     elif id == 1:    # Plot Physics Loss
-        ax.plot(assembled_loss["step"], physics_loss_norm, marker='s', linestyle='-')
+        ax.plot(assembled_loss["step"], phys_loss_norm, marker='s', linestyle='-')
         ax.set_yscale('log')
         ax.set_title("Normalized Physics Loss")
         ax.set_xlabel("Training Steps")
@@ -656,7 +761,7 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
     elif id == 3:    # Plot 
-        ax.plot(assembled_loss["step"], total_loss_norm, marker='^', linestyle='-')
+        ax.plot(assembled_loss["step"], sign_loss_norm, marker='^', linestyle='-')
         ax.set_yscale('log')
         ax.set_title("Normalized Sign Loss")
         ax.set_xlabel("Training Steps")
@@ -721,7 +826,7 @@ from skimage.measure import marching_cubes
 import plotly.graph_objects as go
 
 
-def compute_isosurface_mesh_from_checkpoint(
+def compute_isosurface_mesh_from_checkpoint_(
     checkpoint,
     grid_size=64,
     level=0.0,
@@ -760,47 +865,93 @@ def compute_isosurface_mesh_from_checkpoint(
     verts = verts - 1.0
     return verts, faces
 
-# def show_isosurface_plotly(
-#     checkpoint,
-#     grid_size=64,
-#     level=0.0,
-#     opacity=0.2,
-#     transpose=True,
-#     show_axes=True,
-# ):
-#     verts, faces = compute_isosurface_mesh_from_checkpoint(
-#         checkpoint=checkpoint,
-#         grid_size=grid_size,
-#         level=level,
-#         transpose=transpose,
-#     )
 
-#     i, j, k = faces.T
+import numpy as np
+import jax.numpy as jnp
+from skimage.measure import marching_cubes
 
-#     fig = go.Figure(
-#         data=[
-#             go.Mesh3d(
-#                 x=verts[:, 0],
-#                 y=verts[:, 1],
-#                 z=verts[:, 2],
-#                 i=i, j=j, k=k,
-#                 opacity=opacity,
-#             )
-#         ]
-#     )
 
-#     fig.update_layout(
-#         scene=dict(
-#             aspectmode="cube",
-#             xaxis=dict(visible=show_axes, range=[-1, 1]),
-#             yaxis=dict(visible=show_axes, range=[-1, 1]),
-#             zaxis=dict(visible=show_axes, range=[-1, 1]),
-#         ),
-#         margin=dict(l=0, r=0, t=30, b=0),
-#         title=f"Isosurface: level={level} | grid={grid_size}",
-#     )
-#     # fig.show()
-#     return fig
+def compute_isosurface_mesh_from_checkpoint(
+    checkpoint,
+    grid_size=64,
+    level=0.0,
+    transpose=True,
+    x_range=None,   # e.g. (-0.5, 0.5)
+    y_range=None,   # e.g. (-1.0, 0.2)
+    z_range=None,   # e.g. (-0.5, 0.5)
+):
+    # --- full normalized grids (-1..1) ---
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+
+    # correct step for linspace endpoints
+    d = 2.0 / (grid_size - 1)
+
+    def _slice_from_range(arr, r):
+        """Return (subarray, i0) where i0 is start index in the original array."""
+        if r is None:
+            return arr, 0
+        amin, amax = r
+        mask = (arr >= amin) & (arr <= amax)
+        idx = jnp.where(mask)[0]
+        if idx.size == 0:
+            raise ValueError(f"range={r} selects no grid points.")
+        i0 = int(idx[0])
+        i1 = int(idx[-1]) + 1
+        return arr[i0:i1], i0
+
+    x_sub, x0 = _slice_from_range(x, x_range)
+    y_sub, y0 = _slice_from_range(y, y_range)
+    z_sub, z0 = _slice_from_range(z, z_range)
+
+    # --- evaluate phi only on cropped grid ---
+    X, Y, Z = jnp.meshgrid(x_sub, y_sub, z_sub, indexing="ij")  # axes (x,y,z)
+    grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+
+    model = PINN()
+    params = checkpoint["state"]["params"]
+
+    def phi_fn(xyz):
+        return model.apply(params, xyz.reshape(-1, 3))
+
+    phi_values = phi_fn(grid_points).reshape(x_sub.shape[0], y_sub.shape[0], z_sub.shape[0])
+
+    # Optional transpose (matches your old convention)
+    # (x,y,z) -> (z,y,x)
+    if transpose:
+        phi_values = phi_values.transpose(2, 1, 0)
+
+    phi_np = np.array(phi_values, copy=True)
+
+    # spacing in array-axis order as seen by marching_cubes
+    spacing = (d, d, d)
+
+    verts, faces, _, _ = marching_cubes(phi_np, level=level, spacing=spacing)
+
+    # --- add offsets due to cropping (in [0,2] coordinates before -1 shift) ---
+    if transpose:
+        # array axes are (z,y,x) so verts columns are (z,y,x)
+        verts[:, 0] += z0 * d
+        verts[:, 1] += y0 * d
+        verts[:, 2] += x0 * d
+    else:
+        # array axes are (x,y,z) so verts columns are (x,y,z)
+        verts[:, 0] += x0 * d
+        verts[:, 1] += y0 * d
+        verts[:, 2] += z0 * d
+
+    # shift [0,2] -> [-1,1]
+    verts = verts - 1.0
+
+    # if transposed, reorder verts back to (x,y,z) for the caller
+    if transpose:
+        # currently (z,y,x) -> (x,y,z)
+        verts = verts[:, [2, 1, 0]]
+
+    return verts, faces
+
+
 
 
 def show_isosurface_plotly(
@@ -810,13 +961,82 @@ def show_isosurface_plotly(
     opacity=0.2,
     transpose=True,
     show_axes=True,
-    material="membrane",  # new
+    material="membrane",
+    x_range=None,
+    y_range=None,
+    z_range=None,
+    aspect="data",   # "cube" | "data" | "manual"
 ):
     verts, faces = compute_isosurface_mesh_from_checkpoint(
         checkpoint=checkpoint,
         grid_size=grid_size,
         level=level,
         transpose=transpose,
+        x_range=x_range,
+        y_range=y_range,
+        z_range=z_range,
+    )
+
+    i, j, k = faces.T
+
+    materials = {
+        "membrane": dict(ambient=0.15, diffuse=0.9, specular=0.3, roughness=0.6, fresnel=0.1),
+        "glossy": dict(ambient=0.1, diffuse=0.7, specular=0.8, roughness=0.2, fresnel=0.3),
+        "clay": dict(ambient=0.3, diffuse=0.8, specular=0.1, roughness=0.9, fresnel=0.0),
+    }
+
+    fig = go.Figure(data=[
+        go.Mesh3d(
+            x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
+            i=i, j=j, k=k,
+            opacity=opacity,
+            color="rgba(180, 190, 210, 1.0)",
+            flatshading=False,
+            lighting=materials[material],
+            lightposition=dict(x=1, y=1, z=2),
+        )
+    ])
+
+    scene = dict(
+        xaxis=dict(visible=False, showbackground=False),
+        yaxis=dict(visible=False, showbackground=False),
+        zaxis=dict(visible=False, showbackground=False),
+        bgcolor="white",
+    )
+
+    if aspect == "data":
+        scene["aspectmode"] = "data"
+    elif aspect == "manual":
+        scene["aspectmode"] = "manual"
+        scene["aspectratio"] = dict(x=1, y=1, z=0.3)  # pick what you like
+    else:  # "cube"
+        scene["aspectmode"] = "cube"
+        # optional: enforce actual z range box
+        scene["xaxis"]["range"] = [-1, 1]
+        scene["yaxis"]["range"] = [-1, 1]
+        scene["zaxis"]["range"] = [-1, 1] if z_range is None else list(z_range)
+
+    fig.update_layout(scene=scene, margin=dict(l=0, r=0, t=0, b=0))
+    return fig
+
+
+
+def show_isosurface_plotly_(
+    checkpoint,
+    grid_size=64,
+    level=0.0,
+    opacity=0.2,
+    transpose=True,
+    show_axes=True,
+    material="membrane",  # new
+    z_range=None,
+):
+    verts, faces = compute_isosurface_mesh_from_checkpoint(
+        checkpoint=checkpoint,
+        grid_size=grid_size,
+        level=level,
+        transpose=transpose,
+        z_range=z_range,
     )
 
     i, j, k = faces.T
@@ -884,8 +1104,394 @@ def show_isosurface_plotly(
         margin=dict(l=0, r=0, t=0, b=0),
     )
     
-
     return fig
 
 
 
+
+def _make_slice_points(x, y, z, axis, slice_index):
+    if axis == "z":
+        zz = z[slice_index]
+        X, Y = jnp.meshgrid(x, y, indexing="ij")
+        pts = jnp.stack([X.ravel(), Y.ravel(), jnp.full(X.size, zz)], axis=-1)
+        shape2d = (x.size, y.size)
+    elif axis == "y":
+        yy = y[slice_index]
+        X, Z = jnp.meshgrid(x, z, indexing="ij")
+        pts = jnp.stack([X.ravel(), jnp.full(X.size, yy), Z.ravel()], axis=-1)
+        shape2d = (x.size, z.size)
+    elif axis == "x":
+        xx = x[slice_index]
+        Y, Z = jnp.meshgrid(y, z, indexing="ij")
+        pts = jnp.stack([jnp.full(Y.size, xx), Y.ravel(), Z.ravel()], axis=-1)
+        shape2d = (y.size, z.size)
+    else:
+        raise ValueError(f"axis must be x/y/z, got {axis}")
+    return pts, shape2d
+
+def _batch_apply(fn, pts, batch=4096):
+    outs = []
+    n = pts.shape[0]
+    for i in range(0, n, batch):
+        outs.append(fn(pts[i:i+batch]))
+    return jnp.concatenate(outs, axis=0)
+
+
+def visualize_phase(
+    ax,
+    epsilon,
+    component,
+    grid_size=64,
+    slice_index=32,
+    axis="z",
+    vmin=None,
+    vmax=None,
+    colorbar=True,
+    checkpoint=None,
+    phi_fn=None,
+    step=None,
+    title=None,
+    no_label=False,
+    batch=4096,
+    run_on_cpu=False,
+    expand_xy=None, 
+):
+    valid_components = ["phi", "tension", "bending"]
+    if component not in valid_components:
+        raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
+
+    # Build phi_fn only if not provided
+    if phi_fn is None:
+        if checkpoint is None:
+            raise ValueError("Either `phi_fn` or `checkpoint` must be provided.")
+        state = checkpoint["state"]
+        params = state["params"]
+        model = PINN()
+        phi_fn = lambda x: model.apply(params, x)
+    else:
+        params = None  # unknown
+
+    # grid axes
+    x = jnp.linspace(-1, 1, grid_size)
+    y = jnp.linspace(-1, 1, grid_size)
+    z = jnp.linspace(-1, 1, grid_size)
+    if expand_xy is not None:
+        x = jnp.linspace(-1, 1, grid_size)
+        y = jnp.linspace(-expand_xy, expand_xy, grid_size)
+        z = jnp.linspace(-expand_xy, expand_xy, grid_size)
+    pts, shape2d = _make_slice_points(x, y, z, axis, slice_index)
+
+    # Optionally force CPU placement
+    if run_on_cpu:
+        cpu = jax.devices("cpu")[0]
+        pts = jax.device_put(pts, cpu)
+        # if params exist, move them too (prevents device mismatch / copies)
+        if checkpoint is not None:
+            state = checkpoint["state"]
+            state = jax.device_put(state, cpu)
+            params = state["params"]
+            model = PINN()
+            phi_fn = lambda x: model.apply(params, x)
+
+    phi_batched = lambda P: _batch_apply(lambda Q: phi_fn(Q).squeeze(), P, batch=batch)
+
+    if component == "phi":
+        values = phi_batched(pts)
+
+    elif component == "tension":
+        def phi_scalar(p):
+            return phi_fn(p[None, :]).squeeze()
+
+        grad_single = jax.grad(phi_scalar)
+        grad_batched = jax.jit(jax.vmap(grad_single))
+
+        phi_vals = phi_batched(pts)
+        grads = _batch_apply(grad_batched, pts, batch=batch)
+        sq_grad = jnp.sum(grads**2, axis=1)
+        values = epsilon**2 * sq_grad + 0.5 * (phi_vals**2 - 1)**2
+
+    elif component == "bending":
+        def phi_scalar(p):
+            return phi_fn(p[None, :]).squeeze()
+
+        # d2phi/dx_i dx_i (diagonal Hessian entries)
+        def d2_diag_single(p, i):
+            g = jax.grad(phi_scalar)
+            return jax.grad(lambda pp: g(pp)[i])(p)[i]
+
+        def d2_diag_batched(P, i):
+            fn = jax.jit(jax.vmap(lambda p: d2_diag_single(p, i)))
+            return _batch_apply(fn, P, batch=batch)
+
+        d2xx = d2_diag_batched(pts, 0)
+        d2yy = d2_diag_batched(pts, 1)
+        d2zz = d2_diag_batched(pts, 2)
+        lap_phi = d2xx + d2yy + d2zz
+
+        phi_vals = phi_batched(pts)
+        values = lap_phi - (1 / epsilon**2) * (phi_vals**2 - 1) * phi_vals
+
+    slice_data = values.reshape(shape2d)
+    slice_np = np.array(jax.device_get(slice_data))
+
+    if axis == "z":
+        x_extent, y_extent = np.array(x), np.array(y)
+    elif axis == "y":
+        x_extent, y_extent = np.array(x), np.array(z)
+    else:
+        x_extent, y_extent = np.array(y), np.array(z)
+
+    img = ax.imshow(
+        slice_np, cmap="coolwarm", origin="lower",
+        # extent=[x_extent.min(), x_extent.max(), y_extent.min(), y_extent.max()],
+        extent=[-1, 1, -1, 1],
+        vmin=vmin, vmax=vmax, alpha=1.0
+    )
+
+    # ----------------------------
+    # Label / axis handling
+    # ----------------------------
+    if no_label:
+        ax.set_title("")
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.tick_params(left=False, bottom=False)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    else:
+        if title is not None:
+            ax.set_title(title)
+
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    # ax.set_xlim(-1/expand, 1/expand)
+    # ax.set_ylim(-1/expand, 1/expand)
+
+    return img
+
+
+
+
+def plot_loss_panels(
+    assembled_loss,
+    shape_list,
+    lambda_2_list,
+    figsize=(16, 3.5),
+    logscale_keys=None,
+):
+    loss_keys   = ["data_loss", "sign_loss", "phys_loss", "total_loss"]
+    loss_titles = ["data loss", "sign loss", "physics loss", "total loss"]
+
+    if logscale_keys is None:
+        logscale_keys = []
+
+    # linestyle mapping for lambda_2
+    ls_map = {lambda_2_list[0]: "-", lambda_2_list[-1]: "--"}
+
+    # color mapping for shapes
+    prop_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    color_map = {
+        "biconcave": "red",  
+        "bud_04":    "blue", 
+        "multi":     "green",
+    }
+    # color_map = {shape: prop_cycle[i % len(prop_cycle)]
+    #              for i, shape in enumerate(shape_list)}
+
+    fig, axes = plt.subplots(1, 4, figsize=figsize, sharex=True)
+
+    for ax, key, title in zip(axes, loss_keys, loss_titles):
+        for shape in shape_list:
+            for lambda_2 in lambda_2_list:
+                hist = assembled_loss[shape][lambda_2]
+
+                ax.plot(
+                    hist["step"],
+                    hist[key],
+                    color=color_map[shape],
+                    linestyle=ls_map.get(lambda_2, "-"),
+                    linewidth=1.8,
+                )
+
+        ax.set_title(title)
+        ax.set_xlabel("step")
+        ax.set_ylabel("loss")
+
+        if key in logscale_keys:
+            ax.set_yscale("log")
+
+        ax.grid(True, alpha=0.3)
+
+    # ---- legends ----
+    shape_handles = [
+        Line2D([0], [0], color=color_map[s], lw=2, label=s)
+        for s in shape_list
+    ]
+    lambda_handles = [
+        Line2D([0], [0], color="black", lw=2,
+               linestyle=ls_map[l], label=f"λ2 = {l}")
+        for l in lambda_2_list
+    ]
+
+    # axes[-1].legend(handles=shape_handles, title="shape",
+    #                 loc="upper right", frameon=True)
+    # leg2 = axes[-1].legend(handles=lambda_handles, title="lambda_2",
+    #                        loc="lower right", frameon=True)
+    # axes[-1].add_artist(leg2)
+
+    # First legend: color → shape
+    leg_shape = axes[-1].legend(
+        handles=shape_handles,
+        title="shape",
+        loc="upper right",
+        frameon=True,
+    )    
+
+    plt.tight_layout()
+    return fig, axes
+
+
+def show_cryoet_slice(
+    ax,
+    cryoet,
+    slice_index,
+    axis="z",
+    cmap="gray_r",
+    vmin=None,
+    vmax=None,
+    show_axis=False,
+    show_title=True,
+    interpolation="nearest",
+):
+    """
+    Show a single raw CryoET slice on an existing axis.
+
+    Title is shown as: slice_index / grid_size
+    """
+    vol = np.asarray(cryoet)
+    if vol.ndim != 3:
+        raise ValueError(f"cryoet must be 3D (Z,Y,X), got {vol.shape}")
+
+    Z, Y, X = vol.shape
+    axis = axis.lower()
+
+    if axis == "z":
+        img = vol[slice_index, :, :]
+        grid = Z
+    elif axis == "y":
+        img = vol[:, slice_index, :]
+        grid = Y
+    elif axis == "x":
+        img = vol[:, :, slice_index]
+        grid = X
+    else:
+        raise ValueError("axis must be one of 'z', 'y', or 'x'")
+
+    ax.imshow(
+        img,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        interpolation=interpolation,
+    )
+
+    if not show_axis:
+        ax.set_axis_off()
+    if show_title:
+        ax.set_title(f"{slice_index} / {grid}")
+
+    return ax
+
+
+from pathlib import Path
+import numpy as np
+
+def write_vtk_point_cloud(filename, points, point_scalars=None):
+    """
+    Write a legacy ASCII VTK POLYDATA file for a point cloud.
+    """
+    filename = Path(filename)
+    P = np.asarray(points, dtype=np.float64)
+
+    if P.ndim != 2 or P.shape[1] != 3:
+        raise ValueError(f"points must be shape (N, 3), got {P.shape}")
+
+    N = P.shape[0]
+    point_scalars = {} if point_scalars is None else point_scalars
+
+    for key, arr in point_scalars.items():
+        arr = np.asarray(arr)
+        if arr.shape != (N,):
+            raise ValueError(f"Scalar '{key}' must have shape ({N},), got {arr.shape}")
+
+    with open(filename, "w") as f:
+        f.write("# vtk DataFile Version 3.0\n")
+        f.write("Combined point cloud\n")
+        f.write("ASCII\n")
+        f.write("DATASET POLYDATA\n")
+
+        f.write(f"POINTS {N} float\n")
+        for p in P:
+            f.write(f"{p[0]} {p[1]} {p[2]}\n")
+
+        f.write(f"\nVERTICES {N} {2*N}\n")
+        for i in range(N):
+            f.write(f"1 {i}\n")
+
+        if point_scalars:
+            f.write(f"\nPOINT_DATA {N}\n")
+            for key, arr in point_scalars.items():
+                arr = np.asarray(arr, dtype=np.float64)
+                f.write(f"SCALARS {key} float 1\n")
+                f.write("LOOKUP_TABLE default\n")
+                for v in arr:
+                    if np.isnan(v):
+                        f.write("nan\n")
+                    else:
+                        f.write(f"{v}\n")
+
+
+def combine_datasets_to_vtk(filename, data_edge, data_sign, data_phys):
+
+    pts_edge = np.asarray(data_edge["points"], dtype=np.float32)
+    pts_sign = np.asarray(data_sign["points"], dtype=np.float32)
+    pts_phys = np.asarray(data_phys["points"], dtype=np.float32)
+
+    n_edge = len(pts_edge)
+    n_sign = len(pts_sign)
+    n_phys = len(pts_phys)
+
+    # Combine points in the requested order
+    points = np.concatenate([pts_edge, pts_sign, pts_phys], axis=0)
+
+    # Dataset ID
+    source_id = np.concatenate([
+        np.full(n_edge, 0, dtype=np.float32),  # edge
+        np.full(n_sign, 1, dtype=np.float32),  # sign
+        np.full(n_phys, 2, dtype=np.float32),  # phys
+    ])
+
+    # Labels
+    edge_label = np.concatenate([
+        np.asarray(data_edge["label"], dtype=np.float32),
+        np.full(n_sign, np.nan, dtype=np.float32),
+        np.full(n_phys, np.nan, dtype=np.float32),
+    ])
+
+    sign_label = np.concatenate([
+        np.full(n_edge, np.nan, dtype=np.float32),
+        np.asarray(data_sign["label"], dtype=np.float32),
+        np.full(n_phys, np.nan, dtype=np.float32),
+    ])
+
+    write_vtk_point_cloud(
+        filename,
+        points,
+        point_scalars={
+            "source_id": source_id,
+            "edge_label": edge_label,
+            "sign_label": sign_label,
+        },
+    )

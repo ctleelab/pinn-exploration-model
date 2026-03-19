@@ -3,26 +3,27 @@ import jax.numpy as jnp
 import optax
 from jax import jit
 from flax.training import train_state
-from pinn.model import PINN, loss_data, loss_physics, loss_sign, total_loss, GRID_SIZE
+from pinn.model import PINN, loss_data, loss_phys, loss_sign, total_loss
 import numpy as np
 from typing import NamedTuple
+from functools import partial
 
 # Define TrainState for managing training parameters and optimizer
 class TrainState(train_state.TrainState):
     lambda_1: float  # Weight for loss_data
     lambda_2: float  # Weight for loss_physics
     lambda_3: float  # Weight for loss_sign
-    # threshold: float # Threshold for data loss
+    learning_rate: float
+    warmup_steps: float  # Warmup steps for lambda_2
 
 def create_train_state(
     key, 
-    lambda_1=1000000,
-    lambda_2=1,
-    lambda_3=1,
+    lambda_1=100000,
+    lambda_2=10,
+    lambda_3=100000,
     learning_rate=1e-3,
-    threshold=0.8,
-    sdf_pretrain=None, # "sphere" or "plane"
-    cryoET_data=None,
+    warmup_steps=10000,
+    sdf_pretrain=None,
     init_ckpt=None,
     radius=None):
 
@@ -39,26 +40,10 @@ def create_train_state(
 
         # Select random training points
         train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
-        # train_idx = np.random.choice(grid_points.shape[0], grid_points.shape[0], replace=False)
         x_train = grid_points[train_idx]
         y_train = sdf_initial.ravel()[train_idx]
 
         params = initialize_network_with_sdf(model, params, y_train, x_train)
-
-    # Set initial condition based on the binary input image
-    if cryoET_data is not None:
-        print("Pretraining the network using MRC")
-
-        x_grid, y_grid, z_grid = jnp.meshgrid(
-            jnp.linspace(-1, 1, GRID_SIZE),
-            jnp.linspace(-1, 1, GRID_SIZE),
-            jnp.linspace(-1, 1, GRID_SIZE),
-            indexing="ij"
-        )
-        grid_points = jnp.stack([x_grid.ravel(), y_grid.ravel(), z_grid.ravel()], axis=-1)
-        binary_mask = jnp.where(cryoET_data > threshold, 0, 1).ravel()
-
-        params = initialize_network_with_sdf(model, params, binary_mask, grid_points, steps=10000, learning_rate=1e-3)
 
     # Use pretrained network structure as initial condition
     if init_ckpt is not None:
@@ -76,7 +61,8 @@ def create_train_state(
         lambda_1=lambda_1,
         lambda_2=lambda_2,
         lambda_3=lambda_3,
-        threshold=threshold
+        learning_rate=learning_rate,
+        warmup_steps=warmup_steps,
     ), model
 
 
@@ -155,30 +141,91 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
 
     return params
 
+# # Training step function
+# @jit
+# def train_step(state, data_edge, data_sign, data_phys):
+#     """ Performs one training step, computing gradients and updating parameters. """
+
+#     def compute_losses(params):
+#         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
+#         loss_data_val = loss_data(phi_fn, data_edge)
+#         loss_phys_val = loss_phys(phi_fn, data_phys)
+#         loss_sign_val = loss_sign(phi_fn, data_sign)
+#         total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_phys_val + state.lambda_3 * loss_sign_val
+#         return total_loss_val, (loss_data_val, loss_phys_val, loss_sign_val)
+
+#     (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
+
+#     new_state = state.apply_gradients(grads=grads)  # Update parameters using gradients
+#     loss_data_val, loss_phys_val, loss_sign_val = aux_losses
+
+#     return new_state, loss, loss_data_val, loss_phys_val, loss_sign_val
 
 
-# Training step function
-@jit
-# def train_step(state, x_train, cryoET_data, data_sign):
-def train_step(state, x_train, data_edge, data_sign):
-    """ Performs one training step, computing gradients and updating parameters. """
 
+def linear_schedule(step, max_value, warmup_steps):
+    """
+    Linearly increases from 0 → max_value over warmup_steps.
+    """
+    frac = jnp.clip(step / warmup_steps, 0.0, 1.0)
+    return max_value * frac
+
+
+# @partial(jax.jit, static_argnames=("schedule",))
+# def train_step(state, step, data_edge, data_sign, data_phys, schedule=False):
+
+#     if schedule:
+#         lambda_2_step = linear_schedule(
+#             step,
+#             max_value=state.lambda_2,
+#             warmup_steps=state.warmup_steps
+#         )
+#     else:
+#         lambda_2_step = state.lambda_2
+
+
+#     def compute_losses(params):
+#         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
+
+#         loss_data_val = loss_data(phi_fn, data_edge)
+#         loss_phys_val = loss_phys(phi_fn, data_phys)
+#         loss_sign_val = loss_sign(phi_fn, data_sign)
+
+#         total_loss_val = (
+#             state.lambda_1   * loss_data_val
+#             + lambda_2_step  * loss_phys_val
+#             + state.lambda_3 * loss_sign_val
+#         )
+#         return total_loss_val, (loss_data_val, loss_phys_val, loss_sign_val)
+
+#     (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
+
+#     new_state = state.apply_gradients(grads=grads)
+#     loss_data_val, loss_phys_val, loss_sign_val = aux_losses
+
+#     return new_state, loss, loss_data_val, loss_phys_val, loss_sign_val
+
+@jax.jit
+def train_step_sched(state, step, data_edge, data_sign, data_phys):
+    lambda_2_step = linear_schedule(step, max_value=state.lambda_2, warmup_steps=state.warmup_steps)
+    return _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step)
+
+@jax.jit
+def train_step_nosched(state, step, data_edge, data_sign, data_phys):
+    lambda_2_step = state.lambda_2
+    return _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step)
+
+def _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step):
     def compute_losses(params):
         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        # loss_data_val = loss_data(phi_fn, cryoET_data, state.threshold)
-        loss_data_val = loss_data(phi_fn, data_edge)
-        loss_physics_val = loss_physics(phi_fn, x_train)
-        loss_sign_val = loss_sign(phi_fn, data_sign)
-        total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_physics_val + state.lambda_3 * loss_sign_val
-        return total_loss_val, (loss_data_val, loss_physics_val, loss_sign_val)
+        ld = loss_data(phi_fn, data_edge)
+        lp = loss_phys(phi_fn, data_phys)
+        ls = loss_sign(phi_fn, data_sign)
+        total = state.lambda_1 * ld + lambda_2_step * lp + state.lambda_3 * ls
+        return total, (ld, lp, ls)
 
-    (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
-
-    new_state = state.apply_gradients(grads=grads)  # Update parameters using gradients
-    loss_data_val, loss_physics_val, loss_sign_val = aux_losses
-
-    return new_state, loss, loss_data_val, loss_physics_val, loss_sign_val
-
-
+    (loss, (ld, lp, ls)), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
+    new_state = state.apply_gradients(grads=grads)
+    return new_state, loss, ld, lp, ls
 
 

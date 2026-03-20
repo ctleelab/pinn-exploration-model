@@ -14,7 +14,7 @@ from flax.training import checkpoints
 from tqdm.notebook import trange
 
 from pinn.train_curv import (
-    create_train_state, make_train_step,
+    create_train_state, train_step_sched, train_step_nosched, 
     initial_loss, loss_dict_to_batched, assemble_loss_history, 
     plot_loss_history_ax, 
 )
@@ -138,10 +138,9 @@ def run_one(
     lambda_1: float = 100000,
     lambda_2: float = 10,    
     lambda_3: float = 100000,
-    lambda_4: float = 0,
-    lambda_5: float = 0,
-    lambda_6: float = 0,
+    lambda_4: float = 100000,
     seed: int = 1,
+    # num_colloc: int = 40000,
     num_steps: int = 10000,
     save_interval: int = 100,
     learning_rate: float = 1e-3,
@@ -160,12 +159,8 @@ def run_one(
 
     # Where to SAVE this run
     if sdf_pretrain == "checkpoint":
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont3_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont4_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
-        checkpoint_dir = os.path.abspath(f"{root_dir}/test_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
         # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_cont")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont2_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}")
+        checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_50000")
         # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_test")
     else:
         checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}")
@@ -174,10 +169,7 @@ def run_one(
     init_ckpt = None
     if sdf_pretrain == "checkpoint":
         # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_0_{lambda_3}/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_cont/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_contcont/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/cont2_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}/checkpoint_10000"
-        init_ckpt_path = f"{root_dir}/cont3_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}/checkpoint_10000"
+        init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_cont/checkpoint_10000"
         init_ckpt_path = os.path.abspath(init_ckpt_path)
         init_ckpt = checkpoints.restore_checkpoint(ckpt_dir=init_ckpt_path, target=None)
         print("Initial shape from:", init_ckpt_path)
@@ -187,8 +179,9 @@ def run_one(
     edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}.npz", perm=(2,1,0))
     sign = load_pts_data(f"{pts_path}/sign/s_{shape}.npz", perm=(2,1,0))
     phys = load_pts_data(f"{pts_path}/phys/p_{shape}.npz", perm=(2,1,0))
-    curv = load_pts_data(f"{pts_path}/curv/c_{shape}_5000.npz", perm=(2,1,0))
-    # curv = load_pts_data(f"{pts_path}/curv/c_{shape}_50000.npz", perm=(2,1,0))
+    # phys = load_pts_data(f"{pts_path}/curv/c_{shape}.npz", perm=(2,1,0))
+    # curv = load_pts_data(f"{pts_path}/curv/c_{shape}.npz", perm=(2,1,0))
+    curv = load_pts_data(f"{pts_path}/curv/c_{shape}_50000.npz", perm=(2,1,0))
 
     edge_d = jax.device_put(strip_meta(edge))
     sign_d = jax.device_put(strip_meta(sign))
@@ -198,7 +191,7 @@ def run_one(
     # ===== CREATE TRAIN STATE =====
     if sdf_pretrain == "checkpoint":
         state, model = create_train_state(
-            key, lambda_1, lambda_2, lambda_3, lambda_4, lambda_5, lambda_6,
+            key, lambda_1, lambda_2, lambda_3, lambda_4,
             learning_rate, warmup_steps,
             init_ckpt=init_ckpt
         )
@@ -209,12 +202,12 @@ def run_one(
             sdf_pretrain=sdf_pretrain
         )
 
-    print(f"[{shape}] pretrain={sdf_pretrain} lambdas=({state.lambda_1},{state.lambda_2},{state.lambda_3},{state.lambda_4},{state.lambda_5},{state.lambda_6}) -> {checkpoint_dir}")
+    print(f"[{shape}] pretrain={sdf_pretrain} lambdas=({state.lambda_1},{state.lambda_2},{state.lambda_3},{state.lambda_4}) -> {checkpoint_dir}")
 
-    use_curv = (lambda_4 != 0)
-    use_lapH = (lambda_5 != 0)
-    use_forc = (lambda_6 != 0)
-    train_step_jit = make_train_step(use_curv, use_lapH, use_forc)
+    if schedule:
+        train_step_jit = jax.jit(train_step_sched, donate_argnums=(0,))
+    else:
+        train_step_jit = jax.jit(train_step_nosched, donate_argnums=(0,))
 
     # ===== INITIAL LOSS + CKPT(step=0) =====
     init_d = initial_loss(state, edge_d, sign_d, phys_d, curv_d)
@@ -225,8 +218,6 @@ def run_one(
         "phys_loss":  pick(init_d, "phys_loss", "phys", default=0.0),
         "sign_loss":  pick(init_d, "sign_loss", "sign", default=0.0),
         "curv_loss":  pick(init_d, "curv_loss", "curv", default=0.0),
-        "lapH_loss":  pick(init_d, "lapH_loss", "lapH", default=0.0),
-        "forc_loss":  pick(init_d, "forc_loss", "forc", default=0.0),
     }
     save_ckpt(
         checkpoint_dir, step=0, state=state,
@@ -237,17 +228,9 @@ def run_one(
     # ===== TRAIN LOOP =====
     buffer = []
     for step in trange(1, num_steps + 1):
-        state, total, ld, lp, ls, lc, ll, lf = train_step_jit(state, step, edge_d, sign_d, phys_d, curv_d)
-        buffer.append({
-            "step": step,
-            "total_loss": float(total),
-            "data_loss": float(ld),
-            "phys_loss": float(lp),
-            "sign_loss": float(ls),
-            "curv_loss": float(lc),
-            "lapH_loss": float(ll),
-            "forc_loss": float(lf),
-        })
+        state, total, ld, lp, ls, lc = train_step_jit(state, step, edge_d, sign_d, phys_d, curv_d)
+        buffer.append({"step": step, "total_loss": total, \
+            "data_loss": ld, "phys_loss": lp, "sign_loss": ls, "curv_loss": lc})
 
         if step % save_interval == 0:
             save_ckpt(
@@ -277,23 +260,22 @@ def run_one(
 # Two-stage experiment plan
 # =========================
 for shape in ["biconcave"]:
-    lambda_1 = 100000  # data loss
-    lambda_2 = 10      # phys loss
-    lambda_3 = 100000  # sign loss
-    lambda_4 = 100     # curv loss
-    lambda_5 = 1       # lapH loss
-    lambda_6 = 1       # forc loss
+    lambda_1 = 100000 # data loss
+    lambda_2 = 10     # phys loss
+    lambda_3 = 100000 # sign loss
+    lambda_4 = 100    # curv loss
 
     additive = 0.0
     missing  = 0.0
 
-    # Stage 1: lambda_2 = 0, uniform pretrain
+    # # Stage 1: lambda_2 = 0, uniform pretrain
     # run_one(
     #     shape=shape,
+    #     lambda_2=0,
     #     sdf_pretrain="uniform",
     #     lambda_1=lambda_1,
-    #     lambda_2=0,
     #     lambda_3=lambda_3,
+    #     # num_colloc=num_colloc,
     #     num_steps=10000,
     #     additive= additive,
     #     missing = missing,
@@ -307,10 +289,7 @@ for shape in ["biconcave"]:
         lambda_2=lambda_2,
         lambda_3=lambda_3,
         lambda_4=lambda_4,
-        lambda_5=lambda_5,
-        lambda_6=lambda_6,
         num_steps=10000,
-        # num_steps=1000,
         additive=additive,
         missing = missing,
         schedule = False,

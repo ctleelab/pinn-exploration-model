@@ -9,7 +9,7 @@
 #SBATCH --nodes=1
 #SBATCH --mem=100G
 #SBATCH --gpus-per-node=2
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 
 #SBATCH --chdir=/gscratch/matsulab/sim/pinn-exploration-model/notebooks
 #SBATCH --export=all

@@ -311,7 +311,8 @@ def plot_edge(
     edge_slice = get_slice(edge)
     bulk_slice = get_slice(bulk)
 
-    fig, axes = plt.subplots(1, 4, figsize=(12, 3), squeeze=False)
+    n = len(slice_index)
+    fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
     axes = axes[0]
 
     custom_gray = LinearSegmentedColormap.from_list(
@@ -341,6 +342,394 @@ def plot_edge(
     plt.tight_layout()
     plt.show()
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Patch
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Patch
+
+
+def overlay_points_on_cryoet_test(
+    cryoet,
+    overlays,
+    axis="z",
+    slice_indices=None,
+    alpha=0.8,
+    tol=None,
+    show_title=True,
+    ncols=None,
+    figsize=(4, 4),
+    point_size=20,
+):
+    """
+    Overlay point data on cryo-ET slices.
+
+    Parameters
+    ----------
+    cryoet : (Nx, Ny, Nz) array
+        3D image volume.
+    overlays : list of dict
+        Each dict must contain:
+            - "data": (N, 3) points in normalized coordinates [-1, 1]
+            - "label": legend label
+            - "cmap": matplotlib colormap name
+    axis : {"x", "y", "z"}
+        Slice direction.
+    slice_indices : list[int] or None
+        Slice indices in voxel coordinates.
+    tol : float or None
+        Slice thickness in normalized coordinates.
+        If None, use one voxel thickness.
+    """
+    axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    dim = axis_to_dim[axis]
+    dim_size = cryoet.shape[dim]
+
+    if slice_indices is None:
+        slice_indices = [dim_size // 2]
+
+    for s in slice_indices:
+        if s < 0 or s >= dim_size:
+            raise ValueError(
+                f"slice index {s} is out of bounds for axis '{axis}' with size {dim_size}"
+            )
+
+    if tol is None:
+        tol = 2.0 / (dim_size - 1) / 2.0  # half voxel in normalized coords
+
+    n_slices = len(slice_indices)
+    if ncols is None:
+        ncols = n_slices
+    nrows = int(np.ceil(n_slices / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(figsize[0] * ncols, figsize[1] * nrows)
+    )
+    axes = np.atleast_1d(axes).flatten()
+
+    custom_gray = LinearSegmentedColormap.from_list(
+        "custom_gray", ["#f0f0f0", "#111111"]
+    )
+
+    def get_slice(volume, slice_index):
+        return np.take(volume, slice_index, axis=dim)
+
+    def voxel_to_normalized(idx, size):
+        return -1.0 + 2.0 * idx / (size - 1)
+
+    def project_points(points):
+        if dim == 0:   # x-slice -> show y,z
+            return points[:, 1], points[:, 2]
+        elif dim == 1: # y-slice -> show x,z
+            return points[:, 0], points[:, 2]
+        else:          # z-slice -> show x,y
+            return points[:, 0], points[:, 1]
+
+    legend_elements = []
+
+    for i, slice_index in enumerate(slice_indices):
+        ax = axes[i]
+
+        cryo = get_slice(cryoet, slice_index)
+        ax.imshow(cryo, cmap=custom_gray, origin="lower", extent=(-1, 1, -1, 1))
+
+        slice_pos = voxel_to_normalized(slice_index, dim_size)
+
+        for overlay in overlays:
+            points = np.asarray(overlay["data"])
+            label = overlay.get("label", "Overlay")
+            cmap = overlay.get("cmap", "viridis")
+            cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
+
+            mask = np.abs(points[:, dim] - slice_pos) <= tol
+            pts = points[mask]
+
+            if len(pts) > 0:
+                px, py = project_points(pts)
+                ax.scatter(px, py, s=point_size, c=[cmap_obj(0.8)], alpha=alpha)
+
+            if i == 0:
+                legend_elements.append(
+                    Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
+                )
+
+        if show_title:
+            ax.set_title(f"{slice_index}/{dim_size}")
+
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        ax.axis("off")
+
+    for j in range(n_slices, len(axes)):
+        axes[j].axis("off")
+
+    if legend_elements:
+        fig.legend(handles=legend_elements, loc="upper right", frameon=True, fontsize=9)
+
+    plt.tight_layout()
+    plt.show()
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Patch
+
+
+def overlay_points_on_cryoet(
+    cryoet,
+    overlays,
+    axis="z",
+    slice_indices=None,
+    alpha=0.8,
+    point_size=20,
+    tol=None,
+    show_title=True,
+    ncols=None,
+    figsize=(4, 4),
+):
+    """
+    Overlay sampled points on cryo-ET slices.
+
+    Parameters
+    ----------
+    cryoet : np.ndarray
+        3D cryo-ET volume with shape (Nx, Ny, Nz).
+    overlays : list of dict
+        Each dict should contain:
+            - "data": (N, 3) array of points in normalized coordinates [-1, 1]
+            - "label": legend label
+            - "cmap": matplotlib colormap name or object
+
+        Example:
+            overlays = [
+                {"data": inside,  "label": "Inside",  "cmap": "Reds"},
+                {"data": outside, "label": "Outside", "cmap": "Blues"},
+            ]
+    axis : {"x", "y", "z"}
+        Slicing direction.
+    slice_indices : list[int] or None
+        Slice indices in voxel coordinates. If None, use center slice.
+    alpha : float
+        Point transparency.
+    point_size : float
+        Scatter point size.
+    tol : float or None
+        Slice thickness in normalized coordinates.
+        If None, uses about half a voxel thickness.
+    show_title : bool
+        Whether to show slice titles.
+    ncols : int or None
+        Number of columns in subplot grid.
+    figsize : tuple
+        Size per panel.
+    """
+    axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    dim = axis_to_dim[axis]
+    dim_size = cryoet.shape[dim]
+
+    if slice_indices is None:
+        slice_indices = [dim_size // 2]
+
+    for s in slice_indices:
+        if s < 0 or s >= dim_size:
+            raise ValueError(
+                f"slice index {s} is out of bounds for axis '{axis}' with size {dim_size}"
+            )
+
+    if tol is None:
+        tol = 1.0 / (dim_size - 1)  # about half a voxel in normalized coordinates
+
+    n_slices = len(slice_indices)
+    if ncols is None:
+        ncols = n_slices
+    nrows = int(np.ceil(n_slices / ncols))
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(figsize[0] * ncols, figsize[1] * nrows),
+        squeeze=False,
+    )
+    axes = axes.ravel()
+
+    custom_gray = LinearSegmentedColormap.from_list(
+        "custom_gray", ["#f0f0f0", "#111111"]
+    )
+
+    def get_slice(volume, slice_index):
+        return np.take(volume, slice_index, axis=dim)
+
+    def voxel_to_normalized(idx, size):
+        return -1.0 + 2.0 * idx / (size - 1)
+
+    def project_points(points, dim):
+        if dim == 0:   # x-slice -> show y-z
+            return points[:, 1], points[:, 2], (-1, 1), (-1, 1)
+        elif dim == 1: # y-slice -> show x-z
+            return points[:, 0], points[:, 2], (-1, 1), (-1, 1)
+        else:          # z-slice -> show x-y
+            return points[:, 0], points[:, 1], (-1, 1), (-1, 1)
+
+    legend_elements = []
+
+    for i, slice_index in enumerate(slice_indices):
+        ax = axes[i]
+
+        cryo = get_slice(cryoet, slice_index)
+        ax.imshow(
+            cryo,
+            cmap=custom_gray,
+            origin="lower",
+            extent=(-1, 1, -1, 1),
+        )
+
+        slice_pos = voxel_to_normalized(slice_index, dim_size)
+
+        for overlay in overlays:
+            points = np.asarray(overlay["data"], dtype=float)
+            label = overlay.get("label", "Overlay")
+            cmap = overlay.get("cmap", "viridis")
+            cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
+
+            mask = np.abs(points[:, dim] - slice_pos) <= tol
+            pts = points[mask]
+
+            if pts.shape[0] > 0:
+                px, py, xlim, ylim = project_points(pts, dim)
+                ax.scatter(
+                    py,
+                    px,
+                    s=point_size,
+                    c=[cmap_obj(0.8)],
+                    alpha=alpha,
+                    edgecolors="none",
+                )
+
+            if i == 0:
+                legend_elements.append(
+                    Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
+                )
+
+        if show_title:
+            ax.set_title(f"{slice_index}/{dim_size}")
+
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        ax.axis("off")
+
+    for j in range(n_slices, len(axes)):
+        axes[j].axis("off")
+
+    if legend_elements:
+        fig.legend(
+            handles=legend_elements,
+            loc="upper right",
+            frameon=True,
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+
+def overlay_points_on_cryoet_ori(
+    cryoet,
+    overlays,
+    axis="z",
+    slice_indices=None,
+    alpha=0.35,
+    show_title=True,
+    ncols=None,
+    figsize=(4, 4),
+):
+    axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    dim = axis_to_dim[axis]
+    dim_size = cryoet.shape[dim]
+
+    print("cryoet shape:", cryoet.shape)
+    for overlay in overlays:
+        print("overlay keys:", overlay.keys())
+        if "data" in overlay:
+            print("overlay['data'] shape:", np.asarray(overlay["data"]).shape)
+        if "points" in overlay:
+            print("overlay['points'] shape:", np.asarray(overlay["points"]).shape)
+
+    # Default: center slice
+    if slice_indices is None:
+        slice_indices = [dim_size // 2]
+
+    n_slices = len(slice_indices)
+
+    # layout
+    if ncols is None:
+        ncols = n_slices
+    nrows = int(np.ceil(n_slices / ncols))
+
+    n = len(slice_indices)
+    fig, axes = plt.subplots(1, n, figsize=(3 * n, 3), squeeze=False)
+    axes = np.atleast_1d(axes).flatten()
+
+    custom_gray = LinearSegmentedColormap.from_list(
+        "custom_gray", ["#f0f0f0", "#111111"]
+    )
+
+    legend_elements = []
+
+    for idx, slice_index in enumerate(slice_indices):
+        ax = axes[idx]
+
+        def get_slice(arr):
+            return np.take(arr, slice_index, axis=dim)
+
+        cryo = get_slice(cryoet)
+        ax.imshow(cryo, cmap=custom_gray)
+
+        for overlay in overlays:
+            data = get_slice(overlay["data"]).astype(np.float32)
+            label = overlay.get("label", "Overlay")
+            cmap = overlay.get("cmap", "viridis")
+
+            ax.imshow(
+                np.ma.masked_where(data == 0, data),
+                cmap=cmap,
+                vmin=0,
+                vmax=1,
+                alpha=alpha,
+            )
+
+            # collect legend only once
+            if idx == 0:
+                cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
+                legend_elements.append(
+                    Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
+                )
+
+        if show_title:
+            # ax.set_title(f"{axis}: {slice_index}")
+            ax.set_title(f"{axis} = {slice_index}/{dim_size}")
+
+        ax.axis("off")
+
+    # remove empty axes
+    for j in range(n_slices, len(axes)):
+        axes[j].axis("off")
+
+    # legend (global)
+    if legend_elements:
+        fig.legend(
+            handles=legend_elements,
+            loc="upper right",
+            frameon=True,
+            fontsize=9,
+        )
+
+    plt.tight_layout()
+    plt.show()
 
 
 def overlay_masks_on_cryoet(
@@ -1673,5 +2062,138 @@ def overlay_cryoet_with_points_ax(
     if show_title:
         ax.set_title(title if title is not None else f"{axis}={idx}")
 
+
+import napari
+
+def signs_to_napari_points(signs, shape_zyx):
+    """
+    Convert normalized (x,y,z) points in [-1,1] to napari voxel coords (z,y,x).
+    Expects:
+      signs["points"] : (N,3)
+      signs["label"]  : (N,)  (+1 outside, -1 inside)
+    """
+    Z, Y, X = shape_zyx
+
+    pts = np.asarray(signs["points"])
+    lbl = np.asarray(signs["label"])
+
+    zyx_pos = []
+    zyx_neg = []
+
+    for (x, y, z), s in zip(pts, lbl):
+        ix = (x + 1.0) * 0.5 * (X - 1)
+        iy = (y + 1.0) * 0.5 * (Y - 1)
+        iz = (z + 1.0) * 0.5 * (Z - 1)
+
+        if s > 0:
+            zyx_pos.append([iz, iy, ix])
+        else:
+            zyx_neg.append([iz, iy, ix])
+
+    return (
+        np.asarray(zyx_pos, dtype=np.float32),
+        np.asarray(zyx_neg, dtype=np.float32),
+    )
+
+
+def napari_sign_labeler(
+    cryoET_data,
+    save_path="manual_signs.npz",
+    p_lo=2,
+    p_hi=98,
+    size=1,
+):
+    vol = np.asarray(cryoET_data)
+
+    viewer = napari.Viewer(ndisplay=2)
+    viewer.add_image(
+        vol,
+        name="cryoET",
+        contrast_limits=(np.percentile(vol, p_lo), np.percentile(vol, p_hi)),
+        colormap="gray",
+    )
+
+    pts_plus = viewer.add_points(
+        name="sign_plus(+1 outside)",
+        ndim=3,
+        size=size,
+        face_color="red",
+    )
+    pts_minus = viewer.add_points(
+        name="sign_minus(-1 inside)",
+        ndim=3,
+        size=size,
+        face_color="blue",
+    )
+
+    # ---- RESUME FROM EXISTING FILE (robust: label OR sign) ----
+    if os.path.exists(save_path):
+        print(f"Loading existing sign data from {save_path}")
+        data = np.load(save_path)
+
+        files = set(data.files)
+        if "points" not in files:
+            raise KeyError(f"{save_path} is missing required key 'points'. Found keys: {sorted(files)}")
+
+        if "label" in files:
+            label = data["label"]
+            label_key = "label"
+        elif "sign" in files:
+            label = data["sign"]
+            label_key = "sign"
+        else:
+            raise KeyError(f"{save_path} must contain either 'label' or 'sign'. Found keys: {sorted(files)}")
+
+        existing_signs = {"points": data["points"], "label": label}
+
+        zyx_pos, zyx_neg = signs_to_napari_points(existing_signs, shape_zyx=vol.shape)
+
+        if len(zyx_pos) > 0:
+            pts_plus.data = zyx_pos
+        if len(zyx_neg) > 0:
+            pts_minus.data = zyx_neg
+
+        print(f"Loaded {len(zyx_pos)} (+1) and {len(zyx_neg)} (-1) existing points (from '{label_key}')")
+
+    # ---- CONVERT + SAVE ----
+    def to_signs(points_pos_zyx, points_neg_zyx, shape_zyx):
+        Z, Y, X = shape_zyx
+        pts = []
+        lbl = []
+
+        points_pos_zyx = np.asarray(points_pos_zyx)
+        points_neg_zyx = np.asarray(points_neg_zyx)
+
+        for (z, y, x) in points_pos_zyx:
+            pts.append([2 * (x / (X - 1)) - 1, 2 * (y / (Y - 1)) - 1, 2 * (z / (Z - 1)) - 1])
+            lbl.append(+1)
+
+        for (z, y, x) in points_neg_zyx:
+            pts.append([2 * (x / (X - 1)) - 1, 2 * (y / (Y - 1)) - 1, 2 * (z / (Z - 1)) - 1])
+            lbl.append(-1)
+
+        return {
+            "points": np.asarray(pts, dtype=np.float32),
+            "label":  np.asarray(lbl, dtype=np.float32),
+        }
+
+    @viewer.bind_key("Shift-S", overwrite=True)
+    def _save(viewer):
+        signs = to_signs(pts_plus.data, pts_minus.data, vol.shape)
+        np.savez(save_path, points=signs["points"], label=signs["label"])
+
+        n_total = len(signs["label"])
+        n_pos = int((signs["label"] == 1).sum())
+        n_neg = int((signs["label"] == -1).sum())
+        print(f"Saved {n_total} points to {save_path} (+1={n_pos}, -1={n_neg})")
+
+    print(
+        "\nNapari sign labeling (resume-enabled)\n"
+        "• Existing points (if any) are pre-loaded\n"
+        "• Add more points normally\n"
+        "• Press Shift+S to save\n"
+    )
+
+    return viewer, pts_plus, pts_minus
 
 

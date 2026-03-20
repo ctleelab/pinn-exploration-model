@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import optax
 from jax import jit
 from flax.training import train_state
-from pinn.model import PINN, loss_data, loss_phys, loss_sign, loss_curv, loss_lapH, loss_forc
+from pinn.model import PINN, loss_data, loss_phys, loss_sign, loss_curv, total_loss
 from pinn.model import debug_grad_s_H_point, find_bad_points, find_bad_points_fast, find_bad_points_from_calc_grad_s_H, calc_grad_s_H, debug_bad_point
 import numpy as np
 from typing import NamedTuple
@@ -15,8 +15,6 @@ class TrainState(train_state.TrainState):
     lambda_2: float  # Weight for loss_physics
     lambda_3: float  # Weight for loss_sign
     lambda_4: float  # Weight for loss_curv
-    lambda_5: float  # Weight for loss_lapH
-    lambda_6: float  # Weight for loss_forc
     learning_rate: float
     warmup_steps: float  # Warmup steps for lambda_2
 
@@ -25,9 +23,7 @@ def create_train_state(
     lambda_1=100000,
     lambda_2=10,
     lambda_3=100000,
-    lambda_4=0,
-    lambda_5=0,
-    lambda_6=0,
+    lambda_4=100000,
     learning_rate=1e-3,
     warmup_steps=10000,
     sdf_pretrain=None,
@@ -69,8 +65,6 @@ def create_train_state(
         lambda_2=lambda_2,
         lambda_3=lambda_3,
         lambda_4=lambda_4,
-        lambda_5=lambda_5,
-        lambda_6=lambda_6,
         learning_rate=learning_rate,
         warmup_steps=warmup_steps,
     ), model
@@ -91,17 +85,10 @@ def initial_loss(state, data_edge, data_sign, data_phys, data_curv):
     loss_phys_val = loss_phys(phi_fn, data_phys)
     loss_sign_val = loss_sign(phi_fn, data_sign)
     loss_curv_val = loss_curv(phi_fn, data_curv)
-    loss_lapH_val = loss_lapH(phi_fn, data_curv)
-    loss_forc_val = loss_forc(phi_fn, data_curv)
-
-    total_loss_val = (
-        state.lambda_1 *   loss_data_val
-        + state.lambda_2 * loss_phys_val
-        + state.lambda_3 * loss_sign_val
-        + state.lambda_4 * loss_curv_val
-        + state.lambda_5 * loss_lapH_val
-        + state.lambda_6 * loss_forc_val
-    )
+    total_loss_val = state.lambda_1 * loss_data_val + \
+                     state.lambda_2 * loss_phys_val + \
+                     state.lambda_3 * loss_sign_val + \
+                     state.lambda_4 * loss_curv_val
 
     # Convert to structured format (single-step array)
     loss_log = {
@@ -110,9 +97,7 @@ def initial_loss(state, data_edge, data_sign, data_phys, data_curv):
         "data_loss": np.array([loss_data_val]),
         "phys_loss": np.array([loss_phys_val]),
         "sign_loss": np.array([loss_sign_val]),
-        "curv_loss": np.array([loss_curv_val]),
-        "lapH_loss": np.array([loss_lapH_val]),
-        "forc_loss": np.array([loss_forc_val])
+        "curv_loss": np.array([loss_curv_val])
     }
 
     # print("debugging...")
@@ -142,8 +127,6 @@ def loss_dict_to_batched(loss_list):
         "phys_loss":  np.asarray([as_f32_scalar(e["phys_loss"])  for e in loss_list], dtype=np.float32),
         "sign_loss":  np.asarray([as_f32_scalar(e["sign_loss"])  for e in loss_list], dtype=np.float32),
         "curv_loss":  np.asarray([as_f32_scalar(e["curv_loss"])  for e in loss_list], dtype=np.float32),
-        "lapH_loss":  np.asarray([as_f32_scalar(e["lapH_loss"])  for e in loss_list], dtype=np.float32),
-        "forc_loss":  np.asarray([as_f32_scalar(e["forc_loss"])  for e in loss_list], dtype=np.float32),
     }
 
 
@@ -336,57 +319,6 @@ def _train_step_core(state, step, data_edge, data_sign, data_phys, data_curv, la
     new_state = state.apply_gradients(grads=grads)
     return new_state, loss, ld, lp, ls, lc
 
-def make_train_step(use_curv=False, use_lapH=False, use_forc=False):
-
-    mode = []
-    if use_curv: mode.append("curv")
-    if use_lapH: mode.append("lapH")
-    if use_forc: mode.append("forc")
-    mode_str = "+".join(mode) if mode else "base"
-
-    print(f"[make_train_step] mode = {mode_str}")
-    print(f"  use_curv = {use_curv}")
-    print(f"  use_lapH = {use_lapH}")
-    print(f"  use_forc = {use_forc}")
-
-    def train_step(state, step, data_edge, data_sign, data_phys, data_curv):
-        def compute_losses(params):
-            phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-
-            l_data = loss_data(phi_fn, data_edge)
-            l_phys = loss_phys(phi_fn, data_phys)
-            l_sign = loss_sign(phi_fn, data_sign)
-
-            l_curv = loss_curv(phi_fn, data_curv) if use_curv else jnp.array(0.0, dtype=l_data.dtype)
-            l_lapH = loss_lapH(phi_fn, data_curv) if use_lapH else jnp.array(0.0, dtype=l_data.dtype)
-            l_forc = loss_forc(phi_fn, data_curv) if use_forc else jnp.array(0.0, dtype=l_data.dtype)
-
-            total = (
-                state.lambda_1 * l_data
-                + state.lambda_2 * l_phys
-                + state.lambda_3 * l_sign
-                + state.lambda_4 * l_curv
-                + state.lambda_5 * l_lapH
-                + state.lambda_6 * l_forc
-            )
-
-            return total, (l_data, l_phys, l_sign, l_curv, l_lapH, l_forc)
-
-        (loss, aux), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
-        (l_data, l_phys, l_sign, l_curv, l_lapH, l_forc) = aux
-
-        grad_norm = _tree_l2_norm(grads)
-        jax.debug.print(
-            "step={} loss={} ld={} lp={} ls={} lc={} ll={} lf={} grad_norm={}",
-            step, loss, l_data, l_phys, l_sign, l_curv, l_lapH, l_forc, grad_norm
-        )
-
-        new_state = state.apply_gradients(grads=grads)
-        return new_state, loss, l_data, l_phys, l_sign, l_curv, l_lapH, l_forc
-
-    return jax.jit(train_step, donate_argnums=(0,))
-
-
 def assemble_loss_history(checkpoint_data):
     """
     Assemble loss history from all available checkpoints.
@@ -397,16 +329,8 @@ def assemble_loss_history(checkpoint_data):
     Returns:
         dict: Aggregated loss history with 'step', 'total_loss', 'data_loss', and 'physics_loss'.
     """
-    assembled_loss = {
-        "step": [],
-        "total_loss": [],
-        "data_loss": [],
-        "phys_loss": [],
-        "sign_loss": [],
-        "curv_loss": [],
-        "lapH_loss": [],
-        "forc_loss": [],
-    }
+    assembled_loss = {"step": [], "total_loss": [], \
+    "data_loss": [], "phys_loss": [], "sign_loss": [], "curv_loss": []}
 
     for step, checkpoint in checkpoint_data.items():
         if 'loss' in checkpoint:
@@ -417,8 +341,6 @@ def assemble_loss_history(checkpoint_data):
             assembled_loss["phys_loss"].extend(loss_data["phys_loss"].tolist())
             assembled_loss["sign_loss"].extend(loss_data["sign_loss"].tolist())
             assembled_loss["curv_loss"].extend(loss_data["curv_loss"].tolist())
-            assembled_loss["lapH_loss"].extend(loss_data["lapH_loss"].tolist())
-            assembled_loss["forc_loss"].extend(loss_data["forc_loss"].tolist())
 
     # Convert lists to NumPy arrays for easier handling
     for key in assembled_loss:
@@ -440,8 +362,6 @@ def plot_loss_history_ax(ax, assembled_loss):
     ax.plot(assembled_loss["step"], assembled_loss["phys_loss"], label='Physics Loss', marker='s', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["sign_loss"], label='Sign Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["curv_loss"], label='Curvature Loss', marker='^', linestyle='-')
-    ax.plot(assembled_loss["step"], assembled_loss["lapH_loss"], label='Laplacian Loss', marker='^', linestyle='-')
-    ax.plot(assembled_loss["step"], assembled_loss["forc_loss"], label='Force Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
 
     # Use log scale for better visualization (especially if physics loss is large)

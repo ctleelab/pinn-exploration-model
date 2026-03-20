@@ -83,31 +83,49 @@ def hessian_phi(phi_fn, x):
     x = x.reshape(-1, 3)  # Ensure correct shape
     return vmap(lambda x_i: jacfwd(jacfwd(lambda x: phi_fn(jnp.atleast_2d(x)).squeeze()))(x_i))(x)
 
-# Compute mean curvature H = ∇ ⋅ (∇φ / |∇φ|)
+# # Compute mean curvature H = ∇ ⋅ (∇φ / |∇φ|)
+# def mean_curvature(phi_fn, x):
+#     gphi = grad_phi(phi_fn, x)  # Compute ∇φ (gradient of φ)
+#     norm_gphi = jnp.linalg.norm(gphi, axis=-1, keepdims=True) + 1e-8  # Avoid division by zero
+#     n = gphi / norm_gphi  # Compute unit normal vector
+
+#     # def divergence(x_i):
+#     #     gphi_x = grad_phi(phi_fn, x_i.reshape(1, 3))  # Compute gradient at x_i
+#     #     norm_gphi_x = jnp.linalg.norm(gphi_x, axis=-1, keepdims=True) + 1e-8
+#     #     n_x = gphi_x / norm_gphi_x  # Normal vector at x_i
+#     #     return jnp.sum(jacfwd(lambda x: n_x)(x_i))  # Sum over spatial dimension
+
+#     def divergence(x_i):
+#         def normal_at_x(x):  
+#             gphi_x = grad_phi(phi_fn, x)  # Gradient at x
+#             norm_gphi_x = jnp.linalg.norm(gphi_x, axis=-1, keepdims=True) + 1e-8
+#             return gphi_x / norm_gphi_x  # Normalized gradient
+
+#         jac_n = jacfwd(normal_at_x)(x_i.reshape(1, 3))  # Compute Jacobian of n(x)
+#         return jnp.trace(jac_n.squeeze())  # Compute divergence as trace of the Jacobian
+
+#     div_n = vmap(divergence)(x.reshape(-1, 3))  # Apply to all points in batch
+
+#     return div_n.squeeze()  # Ensure scalar output per point
+
+
 def mean_curvature(phi_fn, x):
-    gphi = grad_phi(phi_fn, x)  # Compute ∇φ (gradient of φ)
-    norm_gphi = jnp.linalg.norm(gphi, axis=-1, keepdims=True) + 1e-8  # Avoid division by zero
-    n = gphi / norm_gphi  # Compute unit normal vector
+    gphi = grad_phi(phi_fn, x)            # (N,3)
+    Hphi = hessian_phi(phi_fn, x)         # (N,3,3)
 
-    # def divergence(x_i):
-    #     gphi_x = grad_phi(phi_fn, x_i.reshape(1, 3))  # Compute gradient at x_i
-    #     norm_gphi_x = jnp.linalg.norm(gphi_x, axis=-1, keepdims=True) + 1e-8
-    #     n_x = gphi_x / norm_gphi_x  # Normal vector at x_i
-    #     return jnp.sum(jacfwd(lambda x: n_x)(x_i))  # Sum over spatial dimension
+    gnorm = jnp.linalg.norm(gphi, axis=1, keepdims=True) + 1e-8
 
-    def divergence(x_i):
-        def normal_at_x(x):  
-            gphi_x = grad_phi(phi_fn, x)  # Gradient at x
-            norm_gphi_x = jnp.linalg.norm(gphi_x, axis=-1, keepdims=True) + 1e-8
-            return gphi_x / norm_gphi_x  # Normalized gradient
+    # lap_phi = jnp.trace(Hphi, axis1=1, axis2=2, keepdims=True)
+    lap_phi = jnp.trace(Hphi, axis1=1, axis2=2)[:, None]
 
-        jac_n = jacfwd(normal_at_x)(x_i.reshape(1, 3))  # Compute Jacobian of n(x)
-        return jnp.trace(jac_n.squeeze())  # Compute divergence as trace of the Jacobian
+    gHg = jnp.sum(
+        gphi[:, None, :] * Hphi * gphi[:, :, None],
+        axis=(1, 2),
+        keepdims=True
+    )
 
-    div_n = vmap(divergence)(x.reshape(-1, 3))  # Apply to all points in batch
-
-    return div_n.squeeze()  # Ensure scalar output per point
-
+    H = 0.5 * (lap_phi / gnorm - gHg / (gnorm**3))
+    return H.squeeze()
 
 
 import jax
@@ -216,28 +234,45 @@ def calc_delta_s_H(phi_fn, x, grad_threshold=1e-4):
 def laplacian_mean_curvature(phi_fn, x):
     return vmap(lambda x_i: jnp.trace(jacfwd(jacfwd(lambda x: mean_curvature(phi_fn, x)))(x_i)))(x.reshape(-1, 3)).squeeze()
 
-def gaussian_curvature(phi_fn, x):
-    """
-    Computes the Gaussian curvature K from the level-set function phi.
-    Uses the formula:
-        K = (∇φ ⋅ H(φ) ⋅ ∇φ - det(H(φ))) / ||∇φ||^4
-    """
-    gphi = grad_phi(phi_fn, x)  # Compute ∇φ
-    H_phi = hessian_phi(phi_fn, x)  # Compute Hessian H(φ)
+# def gaussian_curvature(phi_fn, x):
+#     """
+#     Computes the Gaussian curvature K from the level-set function phi.
+#     Uses the formula:
+#         K = (∇φ ⋅ H(φ) ⋅ ∇φ - det(H(φ))) / ||∇φ||^4
+#     """
+#     gphi = grad_phi(phi_fn, x)  # Compute ∇φ
+#     H_phi = hessian_phi(phi_fn, x)  # Compute Hessian H(φ)
     
-    norm_gphi_sq = jnp.sum(gphi**2, axis=-1, keepdims=True) + 1e-8  # Avoid division by zero
+#     norm_gphi_sq = jnp.sum(gphi**2, axis=-1, keepdims=True) + 1e-8  # Avoid division by zero
 
-    # Compute (∇φ ⋅ H(φ) ⋅ ∇φ)
-    numerator1 = jnp.sum(gphi[:, None, :] * H_phi * gphi[:, :, None], axis=(1, 2), keepdims=True)
+#     # Compute (∇φ ⋅ H(φ) ⋅ ∇φ)
+#     numerator1 = jnp.sum(gphi[:, None, :] * H_phi * gphi[:, :, None], axis=(1, 2), keepdims=True)
 
-    # Compute determinant of Hessian det(H(φ))
-    determinant = jnp.linalg.det(H_phi)
+#     # Compute determinant of Hessian det(H(φ))
+#     determinant = jnp.linalg.det(H_phi)
 
-    # Compute Gaussian curvature K
-    K = (numerator1 - determinant[:, None]) / (norm_gphi_sq**2)
+#     # Compute Gaussian curvature K
+#     K = (numerator1 - determinant[:, None]) / (norm_gphi_sq**2)
 
+#     return K.squeeze()
+
+
+def gaussian_curvature(phi_fn, x):
+    gphi = grad_phi(phi_fn, x)            # (N,3)
+    Hphi = hessian_phi(phi_fn, x)         # (N,3,3)
+
+    gnorm2 = jnp.sum(gphi**2, axis=1, keepdims=True) + 1e-8
+
+    gHg = jnp.sum(
+        gphi[:, None, :] * Hphi * gphi[:, :, None],
+        axis=(1, 2),
+        keepdims=True
+    )
+
+    detH = jnp.linalg.det(Hphi).reshape(-1, 1)
+
+    K = (gHg - detH) / (gnorm2**2)
     return K.squeeze()
-
 
 # Data fidelity loss (ensures φ(x,y,z) aligns with cryo-ET data)
 # def loss_data(phi_fn, x, cryoET_data):
@@ -337,58 +372,73 @@ def loss_sign(phi_fn, data_sign):
     return jnp.mean(residual**2)
 
 
-# def loss_curv(phi_fn, data_curv):
-#     x = data_curv["points"]              # (N,3)
-#     grad_s_H = calc_grad_s_H(phi_fn, x)  # (N,3)
-#     residual = jnp.sum(grad_s_H**2, axis=1)
-#     return jnp.mean(residual)
+def loss_curv(phi_fn, data_curv):
+    x = data_curv["points"]              # (N,3)
+    grad_s_H = calc_grad_s_H(phi_fn, x)  # (N,3)
+    residual = jnp.sum(grad_s_H**2, axis=1)
+    return jnp.mean(residual)
 
-def loss_curv(phi_fn, data_curv, grad_threshold=1e-4):
-    x = data_curv["points"]                      # (N,3)
-    grad_s_H = calc_grad_s_H(phi_fn, x)         # (N,3)
+# def loss_curv(phi_fn, data_curv, grad_threshold=1e-4):
+#     x = data_curv["points"]                      # (N,3)
+#     grad_s_H = calc_grad_s_H(phi_fn, x)         # (N,3)
 
-    def phi_scalar(x_single):
-        return phi_fn(x_single[None, :]).reshape(())
+#     def phi_scalar(x_single):
+#         return phi_fn(x_single[None, :]).reshape(())
 
-    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)
-    gnorm = jnp.linalg.norm(grad_phi, axis=1)
+#     grad_phi = jax.vmap(jax.grad(phi_scalar))(x)
+#     gnorm = jnp.linalg.norm(grad_phi, axis=1)
 
-    finite_mask = jnp.all(jnp.isfinite(grad_s_H), axis=1)
-    grad_mask = gnorm > grad_threshold
-    valid_mask = finite_mask & grad_mask
+#     finite_mask = jnp.all(jnp.isfinite(grad_s_H), axis=1)
+#     grad_mask = gnorm > grad_threshold
+#     valid_mask = finite_mask & grad_mask
 
-    grad_s_H_safe = jnp.where(jnp.isfinite(grad_s_H), grad_s_H, 0.0)
-    residual = jnp.sum(grad_s_H_safe**2, axis=1)
+#     grad_s_H_safe = jnp.where(jnp.isfinite(grad_s_H), grad_s_H, 0.0)
+#     residual = jnp.sum(grad_s_H_safe**2, axis=1)
 
-    n_valid = jnp.sum(valid_mask)
-    loss = jnp.where(n_valid > 0, jnp.sum(residual * valid_mask) / n_valid, 0.0)
+#     n_valid = jnp.sum(valid_mask)
+#     loss = jnp.where(n_valid > 0, jnp.sum(residual * valid_mask) / n_valid, 0.0)
 
-    jax.debug.print("valid curvature points = {} / {}", n_valid, x.shape[0])
-    return loss
+#     jax.debug.print("valid curvature points = {} / {}", n_valid, x.shape[0])
+#     return loss
 
 
-def loss_delta_curv(phi_fn, data_curv, grad_threshold=1e-4):
+def loss_lapH(phi_fn, data_curv, grad_threshold=1e-4):
     x = data_curv["points"]                                # (N,3)
-    delta_s_H = calc_delta_s_H(phi_fn, x, grad_threshold) # (N,)
+    delta_s_H = calc_delta_s_H(phi_fn, x, grad_threshold)  # (N,)
+    residual = delta_s_H**2
+    return jnp.mean(residual)
 
+
+
+def calc_bending_force(phi_fn, x):
+    H = mean_curvature(phi_fn, x)     # (N,)
+    K = gaussian_curvature(phi_fn, x) # (N,)
+    lapH = calc_delta_s_H(phi_fn, x)       # (N,)
+
+    return -(lapH + 2.0 * H * (H**2 - K))
+
+
+def calc_grad_s_force(phi_fn, x):
     def phi_scalar(x_single):
         return phi_fn(x_single[None, :]).reshape(())
 
-    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)
-    gnorm = jnp.linalg.norm(grad_phi, axis=1)
+    def force_scalar(x_single):
+        return calc_bending_force(phi_fn, x_single[None, :]).reshape(())
 
-    finite_mask = jnp.isfinite(delta_s_H)
-    grad_mask = gnorm > grad_threshold
-    valid_mask = finite_mask & grad_mask
+    grad_phi = jax.vmap(jax.grad(phi_scalar))(x)                    # (N,3)
+    n = grad_phi / jnp.linalg.norm(grad_phi, axis=1, keepdims=True)
 
-    delta_s_H_safe = jnp.where(jnp.isfinite(delta_s_H), delta_s_H, 0.0)
-    residual = delta_s_H_safe**2
+    grad_f = jax.vmap(jax.grad(force_scalar))(x)                    # (N,3)
+    grad_s_f = grad_f - jnp.sum(grad_f * n, axis=1, keepdims=True) * n
+    return grad_s_f
 
-    n_valid = jnp.sum(valid_mask)
-    loss = jnp.where(n_valid > 0, jnp.sum(residual * valid_mask) / n_valid, 0.0)
 
-    jax.debug.print("valid delta_s_H points = {} / {}", n_valid, x.shape[0])
-    return loss
+def loss_forc(phi_fn, data_curv):
+    x = data_curv["points"]
+    # grad_s_f = calc_grad_s_force(phi_fn, x)                         # (N,3)
+    grad_s_f = calc_bending_force(phi_fn, x)                         # (N,3)
+    residual = jnp.sum(grad_s_f**2, axis=1)
+    return jnp.mean(residual)
 
 
 # Combined loss function

@@ -1,7 +1,7 @@
 # Physics-Guided Membrane Reconstruction
 
 <p align="center">
-  <img src="assets/flowchart.png" width="700"/>
+  <img src="./assets/flowchart.png" width="700">
 </p>
 
 Reconstruct 3D membrane surfaces with curvature-level accuracy using a physics-informed neural network (PINN). The workflow consists of three main steps:

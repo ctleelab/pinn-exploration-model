@@ -409,6 +409,59 @@ def loss_lapH(phi_fn, data_curv, grad_threshold=1e-4):
     return jnp.mean(residual)
 
 
+import jax
+import jax.numpy as jnp
+
+def inspect_shape_equation_jit(phi_fn, x, alpha=10.0, beta=1.0):
+    H = mean_curvature(phi_fn, x)
+    K = gaussian_curvature(phi_fn, x)
+    lapH = calc_delta_s_H(phi_fn, x)
+
+    term_lapH = lapH
+    term_nl = 2.0 * H * (H**2 - K)
+    term_tension = 2.0 * alpha * H
+    term_pressure = beta
+    residual = term_lapH + term_nl - term_tension - term_pressure
+
+    jax.debug.print(
+        "H     mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(H), jnp.std(H), jnp.min(H), jnp.max(H)
+    )
+    jax.debug.print(
+        "K     mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(K), jnp.std(K), jnp.min(K), jnp.max(K)
+    )
+    jax.debug.print(
+        "lapH  mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(lapH), jnp.std(lapH), jnp.min(lapH), jnp.max(lapH)
+    )
+    jax.debug.print(
+        "force mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(term_lapH + term_nl), jnp.std(term_lapH + term_nl), jnp.min(term_lapH + term_nl), jnp.max(term_lapH + term_nl)
+    )
+    jax.debug.print(
+        "residual mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(residual), jnp.std(residual), jnp.min(residual), jnp.max(residual)
+    )
+    jax.debug.print(
+        "tension     mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(term_tension), jnp.std(term_tension), jnp.min(term_tension), jnp.max(term_tension)
+    )
+    jax.debug.print(
+        "pressure    mean={:.3e}, std={:.3e}, min={:.3e}, max={:.3e}",
+        jnp.mean(term_pressure), jnp.std(term_pressure), jnp.min(term_pressure), jnp.max(term_pressure)
+    )    
+    jax.debug.print(
+        "finite H={}; finite K={}; finite lapH={}; finite res={}",
+        jnp.all(jnp.isfinite(H)),
+        jnp.all(jnp.isfinite(K)),
+        jnp.all(jnp.isfinite(lapH)),
+        jnp.all(jnp.isfinite(residual)),
+    )
+
+    return residual
+
+
 
 def calc_bending_force(phi_fn, x):
     H = mean_curvature(phi_fn, x)     # (N,)
@@ -416,6 +469,15 @@ def calc_bending_force(phi_fn, x):
     lapH = calc_delta_s_H(phi_fn, x)       # (N,)
 
     return -(lapH + 2.0 * H * (H**2 - K))
+
+def calc_shape_derivative(phi_fn, x):
+    H = mean_curvature(phi_fn, x)      # (N,)
+    K = gaussian_curvature(phi_fn, x)  # (N,)
+    lapH = calc_delta_s_H(phi_fn, x)   # (N,)
+    alpha = 0
+    beta  = 0
+
+    return lapH + 2.0 * H * (H**2 - K) - 2.0 * alpha * H - beta
 
 
 def calc_grad_s_force(phi_fn, x):
@@ -436,8 +498,12 @@ def calc_grad_s_force(phi_fn, x):
 def loss_forc(phi_fn, data_curv):
     x = data_curv["points"]
     # grad_s_f = calc_grad_s_force(phi_fn, x)                         # (N,3)
-    grad_s_f = calc_bending_force(phi_fn, x)                         # (N,3)
-    residual = jnp.sum(grad_s_f**2, axis=1)
+    # residual = jnp.sum(grad_s_f**2, axis=1)
+    lag_shape = calc_shape_derivative(phi_fn, x)                    # (N,)
+    residual = lag_shape**2
+
+    # inspect_shape_equation_jit(phi_fn, x)
+
     return jnp.mean(residual)
 
 

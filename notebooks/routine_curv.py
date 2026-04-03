@@ -20,7 +20,7 @@ from pinn.train_curv import (
 )
 from pinn.utils import (
     load_pts_data, strip_meta,
-    save_ckpt, pick
+    save_ckpt, pick, sample_surface_points, save_pts_data
 )
 
 from pinn.cryoet_io import load_mrc_data
@@ -72,9 +72,8 @@ def plot_result(
         return
 
     # ---- Load cryoET volume ----
-    mrc_file_path = f"../data/synthetic/combine/{shape}_a{str_add}_m{str_miss}.mrc"
-    if int(additive) == 0:
-        mrc_file_path = f"../data/synthetic/{shape}.mrc"
+    # mrc_file_path = f"../data/synthetic/mrc/{shape}_a{str_add}_m{str_miss}.mrc"
+    mrc_file_path = f"../data/synthetic/mrc/{shape}_a000_m00.mrc"
     cryoET_data = load_mrc_data(mrc_file_path, grid_size=grid_size)
 
     # ---- Make figure ----
@@ -130,6 +129,54 @@ def plot_result(
     print("Saved:", out_png)
 
 
+def sample_curv_points(
+    shape: str,
+    lambda_1: float = 100000,
+    lambda_2: float = 10,    
+    lambda_3: float = 100000,
+    num_curv: int   = 5000,
+    additive: float = 0.15,
+    missing : float = 0.6,
+    grid_size: int  = 128,
+    seed    : int   = 0,
+    data_type: str = "data_0321", 
+    step    : int   = 10000,
+):
+    key = jax.random.PRNGKey(seed)
+    str_add = f"{additive:.2f}".replace('.', '')
+    str_miss = f"{missing:.1f}".replace('.', '')
+
+    checkpoint_dir = os.path.abspath(
+        f"../outputs/logs/{shape}/{data_type}/"
+        f"a{str_add}_m{str_miss}_g{grid_size}/"
+        f"phase1_{lambda_1}_{lambda_2}_{lambda_3}_0"
+    )
+
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}")
+    checkpoint_data = checkpoints.restore_checkpoint(ckpt_dir=checkpoint_path, target=None)
+
+    print(checkpoint_path)
+
+    ## ===== CURVATURE POINTS SAMPLING ========
+    data_curv = sample_surface_points(key, checkpoint_data, num_curv, oversample=500)
+
+    ## ===== STORE META DATA ========
+    meta_curv = {
+        "type"    : "curv",
+        "n_sample": num_curv,
+        "seed"    : seed,
+        "phi_fn"  : checkpoint_path,
+        "additive": additive, 
+        "missing" : missing, 
+        "grid_size": grid_size,
+    }
+
+    save_data_dir = f"../data/synthetic/pts/curv/a{str_add}_m{str_miss}_g{grid_size}"
+    save_path = f"{save_data_dir}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    save_pts_data(data_curv, save_path, meta_curv)
+
+    return
 
 
 def run_one(
@@ -141,54 +188,50 @@ def run_one(
     lambda_4: float = 0,
     lambda_5: float = 0,
     lambda_6: float = 0,
+    phase: int = 0,
     seed: int = 1,
     num_steps: int = 10000,
     save_interval: int = 100,
     learning_rate: float = 1e-3,
     warmup_steps: int = 1000, # 2000
-    schedule: bool = False,
     init_ckpt_path: str | None = None,
     additive: float = 0.15,
     missing: float = 0.6,
+    grid_size: int = 64,
 ):
     key = jax.random.PRNGKey(seed)
     str_add = f"{additive:.2f}".replace('.', '')
     str_miss = f"{missing:.1f}".replace('.', '')
 
-    root_dir = f"../outputs/logs/{shape}/data_0123/a{str_add}_m{str_miss}"
-    # root_dir = f"../outputs/logs/{shape}/data_0123/a01_w00_t60"
+    root_dir = f"../outputs/logs/{shape}/data_0321/a{str_add}_m{str_miss}_g{grid_size}"
+    checkpoint_dir = os.path.abspath(f"{root_dir}/phase{phase}_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}")
 
-    # Where to SAVE this run
-    if sdf_pretrain == "checkpoint":
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont3_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont4_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
-        checkpoint_dir = os.path.abspath(f"{root_dir}/test_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}_{lambda_6}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_cont")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/cont2_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}")
-        # checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_test")
-    else:
-        checkpoint_dir = os.path.abspath(f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}")
-
-    # Optional: where to LOAD initial state
     init_ckpt = None
-    if sdf_pretrain == "checkpoint":
-        # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_0_{lambda_3}/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_cont/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_contcont/checkpoint_10000"
-        # init_ckpt_path = f"{root_dir}/cont2_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}/checkpoint_10000"
-        init_ckpt_path = f"{root_dir}/cont3_lambda_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}_{lambda_5}/checkpoint_10000"
-        init_ckpt_path = os.path.abspath(init_ckpt_path)
+    if phase == 1:
+        init_ckpt_path = os.path.abspath(f"{root_dir}/phase0_{lambda_1}_0_{lambda_3}_0/checkpoint_10000")
         init_ckpt = checkpoints.restore_checkpoint(ckpt_dir=init_ckpt_path, target=None)
         print("Initial shape from:", init_ckpt_path)
+    elif phase == 2:
+        init_ckpt_path = os.path.abspath(f"{root_dir}/phase1_{lambda_1}_{lambda_2}_{lambda_3}_0/checkpoint_10000")
+        init_ckpt = checkpoints.restore_checkpoint(ckpt_dir=init_ckpt_path, target=None)
+        print("Initial shape from:", init_ckpt_path)
+    # elif phase == 10:
+    #     # init_ckpt_path = os.path.abspath(f"{root_dir}/phase1_{lambda_1}_{lambda_2}_{lambda_3}_0/checkpoint_10000")
+    #     init_ckpt_path = os.path.abspath(f"{root_dir}/phase2_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}/checkpoint_10000")
+    #     init_ckpt = checkpoints.restore_checkpoint(ckpt_dir=init_ckpt_path, target=None)
+    #     print("Initial shape from:", init_ckpt_path)
 
     # ===== LOAD POINT DATA =====
-    pts_path = f"../data/synthetic/pts_data"
-    edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}.npz", perm=(2,1,0))
+    pts_path = f"../data/synthetic/pts"
+    edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}_g{grid_size}.npz", perm=(2,1,0))
+    # sign = load_pts_data(f"{pts_path}/sign/{shape}_manual_signs.npz", perm=(2,1,0))
     sign = load_pts_data(f"{pts_path}/sign/s_{shape}.npz", perm=(2,1,0))
     phys = load_pts_data(f"{pts_path}/phys/p_{shape}.npz", perm=(2,1,0))
-    curv = load_pts_data(f"{pts_path}/curv/c_{shape}_5000.npz", perm=(2,1,0))
-    # curv = load_pts_data(f"{pts_path}/curv/c_{shape}_50000.npz", perm=(2,1,0))
+    if phase == 2:
+        file = f"a{str_add}_m{str_miss}_g{grid_size}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
+        curv = load_pts_data(f"{pts_path}/curv/{file}", perm=(2,1,0))
+    else:
+        curv = load_pts_data(f"{pts_path}/curv/dummy.npz", perm=(2,1,0))
 
     edge_d = jax.device_put(strip_meta(edge))
     sign_d = jax.device_put(strip_meta(sign))
@@ -209,7 +252,15 @@ def run_one(
             sdf_pretrain=sdf_pretrain
         )
 
-    print(f"[{shape}] pretrain={sdf_pretrain} lambdas=({state.lambda_1},{state.lambda_2},{state.lambda_3},{state.lambda_4},{state.lambda_5},{state.lambda_6}) -> {checkpoint_dir}")
+    lambdas = (
+        state.lambda_1,
+        state.lambda_2,
+        state.lambda_3,
+        state.lambda_4,
+        state.lambda_5,
+        state.lambda_6,
+    )
+    print(f"[{shape}] pretrain={sdf_pretrain} lambdas={lambdas} -> {checkpoint_dir}")
 
     use_curv = (lambda_4 != 0)
     use_lapH = (lambda_5 != 0)
@@ -257,13 +308,10 @@ def run_one(
             )
             buffer.clear()
 
-    # Return the path to the final checkpoint for chaining
-    final_ckpt_path = os.path.join(checkpoint_dir, f"checkpoint_{num_steps}")
-
     plot_result(
         checkpoint_dir=checkpoint_dir,
         shape=shape,
-        grid_size=64,
+        grid_size=grid_size,
         steps_to_visualize=(0, 1000, 5000, 10000),
         save_interval=save_interval,
         additive=additive, 
@@ -274,32 +322,63 @@ def run_one(
 
 
 # =========================
-# Two-stage experiment plan
+#      MAIN SIMULATION
 # =========================
-for shape in ["biconcave"]:
-    lambda_1 = 100000  # data loss
-    lambda_2 = 10      # phys loss
-    lambda_3 = 100000  # sign loss
-    lambda_4 = 100     # curv loss
-    lambda_5 = 1       # lapH loss
-    lambda_6 = 1       # forc loss
 
-    additive = 0.0
-    missing  = 0.0
+shape = "bud_04"
+lambda_1 = 100000  # data loss
+lambda_2 = 1       # phys loss
+lambda_3 = 100000  # sign loss
+lambda_4 = 10     # curv loss
+lambda_5 = 0       # lapH loss (not used)
+lambda_6 = 0       # forc loss (not used)
 
-    # Stage 1: lambda_2 = 0, uniform pretrain
-    # run_one(
-    #     shape=shape,
-    #     sdf_pretrain="uniform",
-    #     lambda_1=lambda_1,
-    #     lambda_2=0,
-    #     lambda_3=lambda_3,
-    #     num_steps=10000,
-    #     additive= additive,
-    #     missing = missing,
-    # )
+additive = 0.0
+missing  = 0.0
+# grid_size = 64
 
-    # Stage 2: lambda_2 in [0,1,10], checkpoint pretrain from stage1_final
+for grid_size in [64, 32, 16]:
+
+    # Phase 0: lambda_2 = 0, lambda_4 = 0
+    run_one(
+        shape=shape,
+        sdf_pretrain="uniform",
+        lambda_1=lambda_1,
+        lambda_2=0,
+        lambda_3=lambda_3,
+        num_steps=10000,
+        additive= additive,
+        missing = missing,
+        grid_size = grid_size,
+        phase = 0,
+    )
+
+    # Phase 1: lambda_2 != 0, lambda_4 = 0
+    run_one(
+        shape=shape,
+        sdf_pretrain="checkpoint",
+        lambda_1=lambda_1,
+        lambda_2=lambda_2,
+        lambda_3=lambda_3,
+        num_steps=10000,
+        additive=additive,
+        missing = missing,
+        grid_size = grid_size,
+        phase = 1,
+    )
+
+    sample_curv_points(
+        shape=shape,
+        lambda_1=lambda_1,
+        lambda_2=lambda_2,
+        lambda_3=lambda_3,    
+        additive=additive,
+        missing = missing,
+        grid_size = grid_size,
+        num_curv = 5000,
+    )
+
+    # Phase 2: lambda_2 != 0, lambda_4 != 0
     run_one(
         shape=shape,
         sdf_pretrain="checkpoint",
@@ -307,13 +386,9 @@ for shape in ["biconcave"]:
         lambda_2=lambda_2,
         lambda_3=lambda_3,
         lambda_4=lambda_4,
-        lambda_5=lambda_5,
-        lambda_6=lambda_6,
         num_steps=10000,
-        # num_steps=1000,
         additive=additive,
         missing = missing,
-        schedule = False,
+        grid_size = grid_size,
+        phase = 2,
     )
-
-

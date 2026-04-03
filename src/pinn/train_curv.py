@@ -328,10 +328,10 @@ def _train_step_core(state, step, data_edge, data_sign, data_phys, data_curv, la
     (loss, (ld, lp, ls, lc)), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
     grad_norm = _tree_l2_norm(grads)
 
-    jax.debug.print(
-        "step={} loss={} ld={} lp={} ls={} lc={} grad_norm={}",
-        step, loss, ld, lp, ls, lc, grad_norm
-    )
+    # jax.debug.print(
+    #     "step={} loss={} ld={} lp={} ls={} lc={} grad_norm={}",
+    #     step, loss, ld, lp, ls, lc, grad_norm
+    # )
 
     new_state = state.apply_gradients(grads=grads)
     return new_state, loss, ld, lp, ls, lc
@@ -375,11 +375,11 @@ def make_train_step(use_curv=False, use_lapH=False, use_forc=False):
         (loss, aux), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
         (l_data, l_phys, l_sign, l_curv, l_lapH, l_forc) = aux
 
-        grad_norm = _tree_l2_norm(grads)
-        jax.debug.print(
-            "step={} loss={} ld={} lp={} ls={} lc={} ll={} lf={} grad_norm={}",
-            step, loss, l_data, l_phys, l_sign, l_curv, l_lapH, l_forc, grad_norm
-        )
+        # grad_norm = _tree_l2_norm(grads)
+        # jax.debug.print(
+        #     "step={} loss={} ld={} lp={} ls={} lc={} ll={} lf={} grad_norm={}",
+        #     step, loss, l_data, l_phys, l_sign, l_curv, l_lapH, l_forc, grad_norm
+        # )
 
         new_state = state.apply_gradients(grads=grads)
         return new_state, loss, l_data, l_phys, l_sign, l_curv, l_lapH, l_forc

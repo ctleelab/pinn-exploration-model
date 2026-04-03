@@ -338,7 +338,8 @@ def surface_dice(
     # print("pred_sklt: ", np.sum(pred_sklt))
     # print("pred_mask: ", np.sum(pred_mask))
 
-    return 1 - dice
+    # return 1 - dice
+    return dice
 
 
 def get_masks(mrc_path, dat_seg, grid_size=64, thre_sklt=0.8, threshold=0.8, band_thickness=0.05):
@@ -648,7 +649,7 @@ def plot_accuracy_progress(
 from matplotlib.ticker import LogLocator, NullFormatter
 from matplotlib.ticker import MaxNLocator, ScalarFormatter
 
-def plot_loss_panels(
+def plot_loss_panels_old(
     assembled_loss,
     shape_list,
     lambda_2_list,
@@ -768,4 +769,99 @@ def plot_loss_panels(
 
     return fig, axes
 
+
+
+def plot_loss_panels(
+    assembled_loss,
+    shape_list,
+    legend_order=None,
+    figsize=(18, 3.2),
+    logscale_keys=None,
+    show_legend=True,
+    smooth_window=7,
+    linewidth=0.8,
+):
+    """
+    1×5 loss panels:
+      [data_loss | sign_loss | phys_loss | curv_loss | total_loss]
+
+    Assumes merged global steps:
+      phase 0:   0 - 10000
+      phase 1:   10000 - 20000
+      phase 2:   20000 - 30000
+
+    phys_loss is shown only from phase 1 onward.
+    curv_loss is shown only from phase 2 onward.
+    """
+
+    loss_keys = ["data_loss", "sign_loss", "phys_loss", "curv_loss", "total_loss"]
+    loss_titles = ["Data Loss", "Boundary Loss", "Physics Loss", "Smoothness Loss", "Total Loss"]
+
+    if logscale_keys is None:
+        logscale_keys = []
+
+    color_map = {
+        "biconcave": "red",
+        "bud_04": "blue",
+    }
+
+    if legend_order is None:
+        legend_order = shape_list
+
+    fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True)
+
+    handles, labels = [], []
+
+    for ax, key, title in zip(axes, loss_keys, loss_titles):
+        for shape in legend_order:
+            hist = assembled_loss[shape]
+
+            x = np.asarray(hist["step"])
+            y = np.asarray(hist[key], dtype=float)
+
+            # ---- phase masking ----
+            if key == "phys_loss":
+                y = np.where(x >= 10000, y, np.nan)
+            elif key == "curv_loss":
+                y = np.where(x >= 20000, y, np.nan)
+
+            # ---- smoothing ----
+            y_s = smooth(y, window=smooth_window)
+
+            h, = ax.plot(
+                x / 1000.0,
+                y_s,
+                color=color_map.get(shape, None),
+                linewidth=linewidth,
+            )
+
+            if ax is axes[0]:
+                handles.append(h)
+                labels.append(shape)
+
+        ax.set_title(title, pad=2)
+        ax.set_xlabel("Step (×10³)", labelpad=0)
+        ax.set_ylabel("Loss")
+        ax.grid(False)
+
+        if key in logscale_keys:
+            ax.set_yscale("log")
+
+        ax.axvline(10, linestyle="--", color="k", linewidth=0.4, alpha=0.7)
+        ax.axvline(20, linestyle="--", color="k", linewidth=0.4, alpha=0.7)
+
+        ax.set_xticks([0, 10, 20, 30])
+
+    if show_legend:
+        fig.legend(
+            handles,
+            labels,
+            loc="center right",
+            frameon=False,
+            labelspacing=0.0,
+        )
+
+    fig.subplots_adjust(wspace=0.7, left=0.08, right=0.82)
+
+    return fig, axes
 

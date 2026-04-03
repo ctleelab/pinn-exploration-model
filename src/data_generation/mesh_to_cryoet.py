@@ -37,6 +37,40 @@ def load_membrane_mesh(input_file, frame=-1):
     return trimesh.Trimesh(vertices=coords, faces=faces), coords
 
 
+from pathlib import Path
+import numpy as np
+import trimesh
+import pyvista as pv
+
+
+def load_mesh_from_vtk(input_file):
+
+    input_file = Path(input_file)
+
+    # Read mesh with pyvista
+    mesh = pv.read(str(input_file))
+    if not isinstance(mesh, pv.PolyData):
+        mesh = mesh.extract_surface()
+
+    coords = np.asarray(mesh.points)
+    faces_raw = np.asarray(mesh.faces)
+
+    if len(faces_raw) == 0:
+        raise ValueError(f"No faces found in VTK file: {input_file}")
+
+    face_size = faces_raw[0]
+    if face_size != 3:
+        raise ValueError(
+            f"Mesh is not triangular after processing. "
+            f"Found face size = {face_size}. Try triangulate=True."
+        )
+
+    faces = faces_raw.reshape(-1, 4)[:, 1:4]
+
+    return trimesh.Trimesh(vertices=coords, faces=faces, process=False), coords
+
+
+
 def generate_voxel_grid(mesh, coords, grid_size=128, margin_ratio=0.4):
     """
     Converts a membrane mesh into a voxelized representation.
@@ -570,6 +604,63 @@ def generate_pseudo_cryoet(
 
 
 
+def generate_cryoet_from_vtk(
+    input_file,
+    output_file=None,
+    grid_size=128,
+    sigma=1.0,
+    additive_noise=None,
+    missing_ratio=None,
+    margin_ratio=0.4,
+    missing_wedge=False,
+    wedge_axis=None, # 'x','y','z'
+    axis_angle=None,
+    tilt_max=60,
+):
+    input_file = Path(input_file)
+
+    if output_file is not None:
+        output_file = Path(output_file)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    mesh, coords = load_mesh_from_vtk(input_file)
+    voxel_grid = generate_voxel_grid(mesh, coords, grid_size, margin_ratio=margin_ratio)
+
+    # Data corruptions / augmentations
+    if missing_ratio is not None:
+        voxel_grid = add_random_missing_data(voxel_grid, missing_ratio=missing_ratio)
+    if additive_noise is not None:
+        voxel_grid = add_random_noise(voxel_grid, flip_ratio=additive_noise, seed=121)
+
+    # Distance transform
+    pseudo_cryoET = apply_distance_transform(voxel_grid)
+    # pseudo_cryoET = np.transpose(pseudo_cryoET, (2, 1, 0))  # Rotate Z-axis
+
+    # Missing wedge effect
+    if missing_wedge is True:
+        if wedge_axis is not None:
+            pseudo_cryoET = remove_wedge(pseudo_cryoET, axis=wedge_axis)
+        else:
+            u0 = np.array([1.0, 0.0, 0.0])   # +Z in (Z,Y,X)
+            axis_rot = np.array([0.0, 1.0, 0.0])  # +Y
+            axis_vec = rotate_vector(u0, axis_rot, angle_deg=axis_angle)
+            pseudo_cryoET = remove_wedge(pseudo_cryoET, tilt_max_deg=tilt_max, axis=axis_vec)
+
+    # Gaussian blur for realism
+    pseudo_cryoET = scipy.ndimage.gaussian_filter(pseudo_cryoET, sigma=sigma)
+
+    # Normalization
+    pseudo_cryoET = pseudo_cryoET / pseudo_cryoET.max()
+
+    if output_file is not None:
+        with mrcfile.new(output_file, overwrite=True) as mrc:
+            mrc.set_data(pseudo_cryoET.astype(np.float32))
+        print(f"Pseudo cryo-ET data saved to: {output_file}")
+
+    return pseudo_cryoET
+
+
+
 def plot_single_slice(pseudo_cryoET, ax, axis='z', slice_index=None, thre=None, show_title=True):
     """
     Plots a 2D slice of the generated pseudo cryo-ET data.
@@ -731,6 +822,7 @@ def plot_multiple_slices(
         ax.imshow(img, cmap=custom_gray, vmin=0, vmax=1)
         ax.set_title(f"{axis.upper()} = {idx}/{dim_size}")
         ax.axis("off")
+        ax.invert_yaxis()
 
     plt.tight_layout()
     plt.show()

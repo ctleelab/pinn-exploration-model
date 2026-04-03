@@ -5,7 +5,7 @@
 ##SBATCH --mail-user=atsumat@uw.edu
 
 #SBATCH --account=biology
-#SBATCH --partition=ckpt
+#SBATCH --partition=ckpt-g2
 #SBATCH --nodes=1
 #SBATCH --mem=100G
 #SBATCH --gpus-per-node=2

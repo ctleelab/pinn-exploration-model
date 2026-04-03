@@ -1,5 +1,5 @@
 import numpy as np
-from pinn.model import loss_data, loss_sign, loss_phys, total_loss
+from pinn.model import loss_data, loss_sign, loss_phys, total_loss, PINN
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
@@ -132,7 +132,8 @@ def sample_collocation_points(
 
     state = checkpoint["state"]
     params = state["params"]
-    model = _PINN()
+    # model = _PINN()
+    model = PINN()
     phi_fn = lambda x: model.apply(params, x)
 
     lo, hi = bounds
@@ -215,7 +216,8 @@ def sample_surface_points(
 
     state = checkpoint["state"]
     params = state["params"]
-    model = _PINN()
+    # model = _PINN()
+    model = PINN()
     phi_fn = lambda x: model.apply(params, x).reshape(-1)
 
     lo, hi = bounds
@@ -279,7 +281,8 @@ def sample_sign_points(
 
     state = checkpoint["state"]
     params = state["params"]
-    model = _PINN()
+    # model = _PINN()
+    model = PINN()
     phi_fn = lambda x: model.apply(params, x)
 
     pts_list = []
@@ -913,7 +916,7 @@ def sample_sign_points_marching_cubes(
 
 
 
-LOSS_KEYS = ("step", "total_loss", "data_loss", "phys_loss", "sign_loss")
+LOSS_KEYS = ("step", "total_loss", "data_loss", "phys_loss", "sign_loss", "curv_loss")
 
 def _as_1d_np(x):
     x = np.asarray(x)
@@ -944,34 +947,37 @@ def load_loss_history_dir(ckpt_dir, steps_actual, step_offset=0):
     hist : dict[str, np.ndarray]
         Concatenated history arrays.
     """
-    out = {k: [] for k in LOSS_KEYS}
+    keys_to_load = ["step", "total_loss", "data_loss", "phys_loss", "sign_loss", "curv_loss"]
+    out = {k: [] for k in keys_to_load}
 
     for step_actual in steps_actual:
         ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step_actual}")
         loss = load_loss_from_checkpoint(ckpt_path)
 
-        # offset local steps -> global steps
-        steps = loss["step"] + step_offset
-
-        out["step"].append(steps)
-        for k in ("total_loss", "data_loss", "phys_loss", "sign_loss"):
+        out["step"].append(loss["step"] + step_offset)
+        for k in keys_to_load:
+            if k == "step":
+                continue
             out[k].append(loss[k])
 
-    # concatenate lists of arrays
-    hist = {k: np.concatenate(out[k]) if len(out[k]) > 0 else np.array([]) for k in LOSS_KEYS}
+    hist = {
+        k: np.concatenate(out[k]) if len(out[k]) > 0 else np.array([])
+        for k in keys_to_load
+    }
 
-    # sort by step
+    if hist["step"].size == 0:
+        return hist
+
     order = np.argsort(hist["step"])
-    hist = {k: hist[k][order] for k in LOSS_KEYS}
+    hist = {k: hist[k][order] for k in keys_to_load}
 
-    # drop duplicate steps (keep last) just in case base+cont overlaps at 10000
-    if hist["step"].size > 0:
-        steps = hist["step"]
-        rev = steps[::-1]
-        _, idx_rev = np.unique(rev, return_index=True)   # unique on reversed keeps last
-        keep = (steps.size - 1 - idx_rev)
-        keep.sort()
-        hist = {k: hist[k][keep] for k in LOSS_KEYS}
+    # drop duplicate steps, keep last
+    steps = hist["step"]
+    rev = steps[::-1]
+    _, idx_rev = np.unique(rev, return_index=True)
+    keep = steps.size - 1 - idx_rev
+    keep.sort()
+    hist = {k: hist[k][keep] for k in keys_to_load}
 
     return hist
 

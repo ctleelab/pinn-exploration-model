@@ -114,7 +114,7 @@ def calc_norm_curv_K_force(
     grid_size=64,
     normal_eps=1e-8,
     curvature_eps=1e-8,
-    curvature_kind="kappa",     # "kappa" (= div(n)) or "H" (= kappa/2)
+    curvature_kind="H",     # "kappa" (= div(n)) or "H" (= kappa/2)
     transpose=True,
     x_range=None,
     y_range=None,
@@ -163,7 +163,7 @@ def calc_norm_curv_K_force(
     grads = grad_phi(phi_fn_pts, verts_j)                        # (N,3)
     gnorm = jnp.linalg.norm(grads, axis=1, keepdims=True)        # (N,1)
     normals_j = grads / (gnorm + normal_eps)                     # (N,3)
-    normals = np.asarray(normals_j)
+    normals = - np.asarray(normals_j)
 
     Hphi = hessian_phi(phi_fn_pts, verts_j)                      # (N,3,3)
     trH = jnp.trace(Hphi, axis1=1, axis2=2)                      # (N,)
@@ -185,9 +185,9 @@ def calc_norm_curv_K_force(
 
     # --- 4) Choose curvature output (kappa or H) ---
     if curvature_kind.lower() == "h":
-        curv_j = 0.5 * kappa
+        curv_j = -0.5 * kappa
     else:
-        curv_j = kappa
+        curv_j = -kappa
     curv = np.asarray(curv_j)
 
     # --- 5) Force (optional; expensive) ---
@@ -218,13 +218,15 @@ def calc_norm_curv_K_force(
             lap = v_lap(x)                           # (B,)
 
             # Helfrich (no C0): f_n = -κ_b(Δ_s kappa + kappa^3 - 2 kappa K) + σ kappa
-            f_n = -kappa_b * (lap + kap**3 - 2.0 * kap * Kg) + sigma * kap # original
-            # f_n = kappa_b * (lap - kap**3 + 2.0 * kap * Kg) + sigma * kap # test
+            # f_n = -kappa_b * (lap + kap**3 - 2.0 * kap * Kg) + sigma * kap # original
+            f_n =  kappa_b * (lap - kap**3 + 2.0 * kap * Kg) + sigma * kap # test
             out_force.append(f_n[:, None] * nrm)      # (B,3)
 
         force = np.asarray(jnp.concatenate(out_force, axis=0))
 
-    return verts, faces, normals, curv, gauss, force
+    theta = np.arccos(normals @ (1,0,0))
+
+    return verts, faces, normals, theta, curv, gauss, force
 
 
 
@@ -1146,14 +1148,16 @@ def plot_normals_hist_2exp_vs_gt(
 #     curvs = dat[keys[3]]
 #     return verts, faces, norms, curvs
 
-def load_mesh_npz(npz_path, keys=("verts", "faces", "norms", "curvs", "gauss")):
+def load_mesh_npz(npz_path, keys=("verts", "faces", "norms", "theta", "curvs", "gauss", "force")):
     dat = np.load(npz_path, allow_pickle=True)
     verts = dat[keys[0]]
     faces = dat[keys[1]]
     norms = dat[keys[2]]
-    curvs = dat[keys[3]]
-    gauss = dat[keys[3]]
-    return verts, faces, norms, curvs, gauss
+    theta = dat[keys[3]]
+    curvs = dat[keys[4]]
+    gauss = dat[keys[5]]
+    force = dat[keys[6]]
+    return verts, faces, norms, theta, curvs, gauss, force
 
 
 
@@ -1462,4 +1466,255 @@ def match_and_plot_two_data(
     return fig 
 
 
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial import cKDTree
+
+
+def match_and_plot_multi_data(
+    verts_A,
+    vals_A,
+    B_datasets,
+    max_dist=None,
+    mutual=False,
+    xlim=None,
+    ylim=None,
+    aspect="auto",
+    box_aspect=None,
+    labels=None,
+    colors=None,
+    title=None,
+    xlabel="A values",
+    ylabel="B values (NN matched)",
+    ax=None,
+    figsize=(4.5, 4.5),
+    s=2,
+    alpha=1,
+):
+    """
+    Nearest-neighbor matching for A against multiple B datasets, plotted together.
+
+    Parameters
+    ----------
+    verts_A : (N, d) array
+        Coordinates for dataset A.
+    vals_A : (N,) array
+        Values for dataset A.
+    B_datasets : list of tuple
+        Each element should be (verts_B, vals_B).
+        Example:
+            [
+                (verts_B1, vals_B1),
+                (verts_B2, vals_B2),
+                (verts_B3, vals_B3),
+            ]
+    max_dist : float or None
+        Keep only matches with distance <= max_dist.
+    mutual : bool
+        If True, enforce mutual nearest-neighbor matching.
+    labels : list of str or None
+        Labels for each B dataset.
+    colors : list of color specs or None
+        Colors for each B dataset.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    out : dict
+        Keys are labels, values are dicts containing:
+            A_kept, B_kept, corr, mask, dist
+    """
+
+    def _match(verts_A, vals_A, verts_B, vals_B):
+        tree_B = cKDTree(verts_B)
+        dist, idx_B = tree_B.query(verts_A, k=1, workers=-1)
+
+        mask = np.ones(len(verts_A), dtype=bool)
+        if max_dist is not None:
+            mask &= dist <= max_dist
+
+        if mutual:
+            tree_A = cKDTree(verts_A)
+            _, idx_A_back = tree_A.query(verts_B, k=1, workers=-1)
+            mask &= (idx_A_back[idx_B] == np.arange(len(verts_A)))
+
+        A_kept = vals_A[mask]
+        B_kept = vals_B[idx_B[mask]]
+
+        if len(A_kept) < 2:
+            raise RuntimeError("Too few matched points after filtering.")
+
+        corr = float(np.corrcoef(A_kept, B_kept)[0, 1])
+
+        return {
+            "A_kept": A_kept,
+            "B_kept": B_kept,
+            "corr": corr,
+            "mask": mask,
+            "dist": dist,
+        }
+
+    nB = len(B_datasets)
+
+    if labels is None:
+        labels = [f"B{i+1}" for i in range(nB)]
+    if colors is None:
+        colors = [None] * nB
+
+    if len(labels) != nB:
+        raise ValueError("labels must have the same length as B_datasets")
+    if len(colors) != nB:
+        raise ValueError("colors must have the same length as B_datasets")
+
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
+
+    out = {}
+
+    all_vals = []
+
+    for (verts_B, vals_B), label, color in zip(B_datasets, labels, colors):
+        result = _match(verts_A, vals_A, verts_B, vals_B)
+        out[label] = result
+
+        ax.scatter(
+            result["A_kept"],
+            result["B_kept"],
+            s=s,
+            alpha=alpha,
+            color=color,
+            label=f"{label} (r={result['corr']:.3f})",
+            zorder=2,
+            edgecolors="none",
+            rasterized=True,
+        )
+
+        all_vals.append(result["A_kept"])
+        all_vals.append(result["B_kept"])
+
+    # ---- Identity line ----
+    all_vals = np.concatenate(all_vals)
+    lo, hi = np.nanmin(all_vals), np.nanmax(all_vals)
+
+    ax.plot(
+        [lo, hi], [lo, hi],
+        "--", color="black"
+    )
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if title is not None:
+        ax.set_title(title)
+
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+    ax.set_aspect(aspect)
+    if box_aspect is not None:
+        ax.set_box_aspect(box_aspect)
+
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.45, -0.26),
+        frameon=False,
+        ncol=1,
+        handletextpad=-0.5,
+        columnspacing=0.0,
+        labelspacing=0.0,
+    )
+
+    return fig, out
+
+
+
+
+def plot_ablation(
+    metric_dict,
+    shape_list,
+    phase_list,
+    x_values,
+    ylabel="Metric",
+    xlabel="x_values",
+    title=None,
+    figsize=(6, 4),
+    marker="o",
+    # linewidth=1.8,
+    markersize=2,
+    show_legend=True,
+    save_path=None,
+    ylim = None,
+    gap_after_first = False,
+    xtick_labels=None,
+):
+    # equally spaced x positions
+    x = np.arange(len(x_values))
+
+    # colors for shapes
+    # cmap = plt.get_cmap("tab10")
+    # shape_colors = {shape: cmap(i) for i, shape in enumerate(shape_list)}
+
+    shape_colors = {
+        "biconcave": "tab:red",
+        "bud_04": "tab:blue",
+    }
+
+    # line styles for phases
+    linestyle_map = {
+        0: ":",
+        1: "--",
+        2: "-",
+    }
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if gap_after_first:
+        ax.axvline(0.5, linestyle="--", color="black", alpha=1.0, linewidth=0.5)
+
+    for shape in shape_list:
+        for phase in phase_list:
+            y = [metric_dict[shape][phase][x_val] for x_val in x_values]
+
+            ax.plot(
+                x,
+                y,
+                color=shape_colors[shape],
+                linestyle=linestyle_map.get(phase, "-"),
+                marker=marker,
+                # linewidth=linewidth,
+                markersize=markersize,
+                label=f"{shape}, phase {phase}",
+            )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(m) for m in x_values])
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    if xtick_labels is not None:
+        ax.set_xticklabels(xtick_labels)
+
+
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if show_legend:
+        # ax.legend(frameon=False, fontsize=9)
+        ax.legend(frameon=False)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight")
+
+    plt.show()
 

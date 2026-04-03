@@ -11,18 +11,33 @@ import matplotlib.pyplot as plt
 plt.style.core.USER_LIBRARY_PATHS.append('/gscratch/matsulab/utils/ctleelab-mpl-utilities/ctleelab_plothelper')
 plt.style.reload_library()
 
+# def clahe_volume_slicewise_fast(volume, axis=0, clipLimit=2.0, tileGridSize=(8,8)):
+#     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
+
+#     vol = np.asarray(volume)
+#     volA = np.moveaxis(vol, axis, 0)  # shape (N, H, W)
+
+#     outA = np.empty(volA.shape, dtype=np.uint8)
+#     for i in range(volA.shape[0]):
+#         sl_u8 = cv2.normalize(volA[i], None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+#         outA[i] = clahe.apply(sl_u8)
+
+#     return np.moveaxis(outA, 0, axis)
+
 def clahe_volume_slicewise_fast(volume, axis=0, clipLimit=2.0, tileGridSize=(8,8)):
     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
 
     vol = np.asarray(volume)
-    volA = np.moveaxis(vol, axis, 0)  # shape (N, H, W)
+    vol_u8 = (vol * 255).astype(np.uint8)
 
-    outA = np.empty(volA.shape, dtype=np.uint8)
+    volA = np.moveaxis(vol_u8, axis, 0)
+
+    outA = np.empty_like(volA)
     for i in range(volA.shape[0]):
-        sl_u8 = cv2.normalize(volA[i], None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        outA[i] = clahe.apply(sl_u8)
+        outA[i] = clahe.apply(volA[i])
 
-    return np.moveaxis(outA, 0, axis)
+    out = np.moveaxis(outA, 0, axis).astype(np.float32) / 255.0
+    return out
 
 def downsample_ori(
     cryoet_data, 
@@ -480,161 +495,385 @@ from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Patch
 
 
+# def overlay_points_on_cryoet(
+#     cryoet,
+#     overlays,
+#     axis="z",
+#     slice_indices=None,
+#     alpha=0.8,
+#     point_size=20,
+#     tol=None,
+#     show_title=True,
+#     ncols=None,
+#     figsize=(4, 4),
+# ):
+#     """
+#     Overlay sampled points on cryo-ET slices.
+
+#     Parameters
+#     ----------
+#     cryoet : np.ndarray
+#         3D cryo-ET volume with shape (Nx, Ny, Nz).
+#     overlays : list of dict
+#         Each dict should contain:
+#             - "data": (N, 3) array of points in normalized coordinates [-1, 1]
+#             - "label": legend label
+#             - "cmap": matplotlib colormap name or object
+
+#         Example:
+#             overlays = [
+#                 {"data": inside,  "label": "Inside",  "cmap": "Reds"},
+#                 {"data": outside, "label": "Outside", "cmap": "Blues"},
+#             ]
+#     axis : {"x", "y", "z"}
+#         Slicing direction.
+#     slice_indices : list[int] or None
+#         Slice indices in voxel coordinates. If None, use center slice.
+#     alpha : float
+#         Point transparency.
+#     point_size : float
+#         Scatter point size.
+#     tol : float or None
+#         Slice thickness in normalized coordinates.
+#         If None, uses about half a voxel thickness.
+#     show_title : bool
+#         Whether to show slice titles.
+#     ncols : int or None
+#         Number of columns in subplot grid.
+#     figsize : tuple
+#         Size per panel.
+#     """
+#     cryoet = np.asarray(cryoet)
+#     axis_to_dim = {"x": 0, "y": 1, "z": 2}
+#     dim = axis_to_dim[axis]
+#     dim_size = cryoet.shape[dim]
+
+#     if slice_indices is None:
+#         slice_indices = [dim_size // 2]
+
+#     for s in slice_indices:
+#         if s < 0 or s >= dim_size:
+#             raise ValueError(
+#                 f"slice index {s} is out of bounds for axis '{axis}' with size {dim_size}"
+#             )
+
+#     if tol is None:
+#         tol = 1.0 / (dim_size - 1)  # about half a voxel in normalized coordinates
+
+#     n_slices = len(slice_indices)
+#     if ncols is None:
+#         ncols = n_slices
+#     nrows = int(np.ceil(n_slices / ncols))
+
+#     fig, axes = plt.subplots(
+#         nrows,
+#         ncols,
+#         figsize=(figsize[0] * ncols, figsize[1] * nrows),
+#         squeeze=False,
+#     )
+#     axes = axes.ravel()
+
+#     custom_gray = LinearSegmentedColormap.from_list(
+#         "custom_gray", ["#f0f0f0", "#111111"]
+#     )
+
+#     def get_slice(volume, slice_index):
+#         return np.take(volume, slice_index, axis=dim)
+
+#     def voxel_to_normalized(idx, size):
+#         return -1.0 + 2.0 * idx / (size - 1)
+
+#     def project_points(points, dim):
+#         if dim == 0:   # x-slice -> show y-z
+#             return points[:, 1], points[:, 2], (-1, 1), (-1, 1)
+#         elif dim == 1: # y-slice -> show x-z
+#             return points[:, 0], points[:, 2], (-1, 1), (-1, 1)
+#         else:          # z-slice -> show x-y
+#             return points[:, 0], points[:, 1], (-1, 1), (-1, 1)
+
+#     legend_elements = []
+
+#     for i, slice_index in enumerate(slice_indices):
+#         ax = axes[i]
+
+#         cryo = get_slice(cryoet, slice_index)
+#         ax.imshow(
+#             cryo,
+#             cmap=custom_gray,
+#             origin="lower",
+#             extent=(-1, 1, -1, 1),
+#         )
+
+#         slice_pos = voxel_to_normalized(slice_index, dim_size)
+
+#         for overlay in overlays:
+#             points = np.asarray(overlay["data"], dtype=float)
+#             label = overlay.get("label", "Overlay")
+#             cmap = overlay.get("cmap", "viridis")
+#             cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
+
+#             mask = np.abs(points[:, dim] - slice_pos) <= tol
+#             pts = points[mask]
+
+#             if pts.shape[0] > 0:
+#                 px, py, xlim, ylim = project_points(pts, dim)
+#                 ax.scatter(
+#                     py,
+#                     px,
+#                     s=point_size,
+#                     c=[cmap_obj(0.8)],
+#                     alpha=alpha,
+#                     edgecolors="none",
+#                 )
+
+#             if i == 0:
+#                 legend_elements.append(
+#                     Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
+#                 )
+
+#         if show_title:
+#             ax.set_title(f"{slice_index}/{dim_size}")
+
+#         ax.set_xlim(-1, 1)
+#         ax.set_ylim(-1, 1)
+#         ax.axis("off")
+
+#     for j in range(n_slices, len(axes)):
+#         axes[j].axis("off")
+
+#     if legend_elements:
+#         fig.legend(
+#             handles=legend_elements,
+#             loc="upper right",
+#             frameon=True,
+#             fontsize=9,
+#         )
+
+#     plt.tight_layout()
+#     plt.show()
+
+
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
 def overlay_points_on_cryoet(
     cryoet,
-    overlays,
+    overlays=None,
     axis="z",
-    slice_indices=None,
-    alpha=0.8,
-    point_size=20,
+    slice_index=None,
+    threshold=None,
+    pts_alpha=0.8,
+    cryo_alpha=1.0,
+    pts_size=20,
     tol=None,
-    show_title=True,
-    ncols=None,
+    show_title=False,
+    show_legend=False,
     figsize=(4, 4),
+    ncols=4,
+    save_path=None,
 ):
     """
-    Overlay sampled points on cryo-ET slices.
+    Plot cryo-ET slice(s) with optional point overlays.
 
     Parameters
     ----------
-    cryoet : np.ndarray
-        3D cryo-ET volume with shape (Nx, Ny, Nz).
-    overlays : list of dict
-        Each dict should contain:
-            - "data": (N, 3) array of points in normalized coordinates [-1, 1]
-            - "label": legend label
-            - "cmap": matplotlib colormap name or object
-
-        Example:
-            overlays = [
-                {"data": inside,  "label": "Inside",  "cmap": "Reds"},
-                {"data": outside, "label": "Outside", "cmap": "Blues"},
-            ]
-    axis : {"x", "y", "z"}
-        Slicing direction.
-    slice_indices : list[int] or None
-        Slice indices in voxel coordinates. If None, use center slice.
-    alpha : float
-        Point transparency.
-    point_size : float
-        Scatter point size.
-    tol : float or None
-        Slice thickness in normalized coordinates.
-        If None, uses about half a voxel thickness.
-    show_title : bool
-        Whether to show slice titles.
-    ncols : int or None
-        Number of columns in subplot grid.
-    figsize : tuple
-        Size per panel.
+    slice_index : int or sequence of int or None
+        If int, plot one slice.
+        If list/tuple/ndarray, plot multiple slices.
+        If None, use the middle slice.
     """
+    cryoet = np.asarray(cryoet)
     axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    if axis not in axis_to_dim:
+        raise ValueError(f"axis must be one of {list(axis_to_dim.keys())}, got {axis}")
     dim = axis_to_dim[axis]
     dim_size = cryoet.shape[dim]
 
-    if slice_indices is None:
-        slice_indices = [dim_size // 2]
+    if slice_index is None:
+        slice_list = [dim_size // 2]
+    elif np.isscalar(slice_index):
+        slice_list = [int(slice_index)]
+    else:
+        slice_list = [int(s) for s in slice_index]
 
-    for s in slice_indices:
+    for s in slice_list:
         if s < 0 or s >= dim_size:
             raise ValueError(
-                f"slice index {s} is out of bounds for axis '{axis}' with size {dim_size}"
+                f"slice_index {s} is out of bounds for axis '{axis}' with size {dim_size}"
             )
 
+    n = len(slice_list)
+
+    if n == 1:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        overlay_points_on_cryoet_ax(
+            ax=ax,
+            cryoet=cryoet,
+            overlays=overlays,
+            threshold=threshold,
+            axis=axis,
+            slice_index=slice_list[0],
+            pts_alpha=pts_alpha,
+            cryo_alpha=cryo_alpha,
+            pts_size=pts_size,
+            tol=tol,
+            show_title=show_title,
+            show_legend=show_legend,
+        )
+    else:
+        ncols = n
+        nrows = 1
+        fig, axes = plt.subplots(
+            nrows, ncols, figsize=(figsize[0] * ncols, figsize[1] * nrows)
+        )
+        axes = np.atleast_1d(axes).ravel()
+
+        for ax, s in zip(axes, slice_list):
+            overlay_points_on_cryoet_ax(
+                ax=ax,
+                cryoet=cryoet,
+                overlays=overlays,
+                threshold=threshold,
+                axis=axis,
+                slice_index=s,
+                pts_alpha=pts_alpha,
+                cryo_alpha=cryo_alpha,
+                pts_size=pts_size,
+                tol=tol,
+                show_title=show_title,
+                show_legend=show_legend,
+            )
+
+        for ax in axes[n:]:
+            ax.axis("off")
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        save_dir = os.path.dirname(save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        plt.savefig(save_path, bbox_inches="tight", dpi=300)
+
+    plt.show()
+    return
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Patch
+
+
+def overlay_points_on_cryoet_ax(
+    ax,
+    cryoet,
+    overlays=None,
+    threshold=None,
+    axis="z",
+    slice_index=None,
+    pts_alpha=0.8,
+    cryo_alpha=1.0,
+    pts_size=20,
+    tol=None,
+    show_title=False,
+    show_legend=False,
+):
+    cryoet = np.asarray(cryoet)
+    axis_to_dim = {"x": 0, "y": 1, "z": 2}
+    if axis not in axis_to_dim:
+        raise ValueError(f"axis must be one of {list(axis_to_dim.keys())}, got {axis}")
+
+    dim = axis_to_dim[axis]
+    dim_size = cryoet.shape[dim]
+
+    if threshold is not None:
+        cryoet = np.where(cryoet > threshold, 1, 0)
+
+    if slice_index is None:
+        slice_index = dim_size // 2
+
+    if slice_index < 0 or slice_index >= dim_size:
+        raise ValueError(
+            f"slice_index {slice_index} is out of bounds for axis '{axis}' with size {dim_size}"
+        )
+
     if tol is None:
-        tol = 1.0 / (dim_size - 1)  # about half a voxel in normalized coordinates
-
-    n_slices = len(slice_indices)
-    if ncols is None:
-        ncols = n_slices
-    nrows = int(np.ceil(n_slices / ncols))
-
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(figsize[0] * ncols, figsize[1] * nrows),
-        squeeze=False,
-    )
-    axes = axes.ravel()
+        tol = 1.0 / (dim_size - 1)
 
     custom_gray = LinearSegmentedColormap.from_list(
         "custom_gray", ["#f0f0f0", "#111111"]
     )
 
-    def get_slice(volume, slice_index):
-        return np.take(volume, slice_index, axis=dim)
+    def get_slice(volume, idx, dim):
+        return np.take(volume, idx, axis=dim)
 
     def voxel_to_normalized(idx, size):
         return -1.0 + 2.0 * idx / (size - 1)
 
     def project_points(points, dim):
-        if dim == 0:   # x-slice -> show y-z
-            return points[:, 1], points[:, 2], (-1, 1), (-1, 1)
-        elif dim == 1: # y-slice -> show x-z
-            return points[:, 0], points[:, 2], (-1, 1), (-1, 1)
-        else:          # z-slice -> show x-y
-            return points[:, 0], points[:, 1], (-1, 1), (-1, 1)
+        if dim == 0:
+            return points[:, 1], points[:, 2]
+        elif dim == 1:
+            return points[:, 0], points[:, 2]
+        else:
+            return points[:, 0], points[:, 1]
 
+    # --- plot image ---
+    cryo = get_slice(cryoet, slice_index, dim)
+    ax.imshow(
+        cryo,
+        cmap=custom_gray,
+        origin="lower",
+        extent=(-1, 1, -1, 1),
+        alpha=cryo_alpha,
+    )
+
+    slice_pos = voxel_to_normalized(slice_index, dim_size)
     legend_elements = []
 
-    for i, slice_index in enumerate(slice_indices):
-        ax = axes[i]
-
-        cryo = get_slice(cryoet, slice_index)
-        ax.imshow(
-            cryo,
-            cmap=custom_gray,
-            origin="lower",
-            extent=(-1, 1, -1, 1),
-        )
-
-        slice_pos = voxel_to_normalized(slice_index, dim_size)
-
+    # --- plot overlays if provided ---
+    if overlays is not None:
         for overlay in overlays:
             points = np.asarray(overlay["data"], dtype=float)
             label = overlay.get("label", "Overlay")
-            cmap = overlay.get("cmap", "viridis")
-            cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
+            # cmap = overlay.get("cmap", "viridis")
+            color = overlay.get("color", None)
+            size = overlay.get("point_size", pts_size)
+
+            # cmap_obj = plt.get_cmap(cmap) if isinstance(cmap, str) else cmap
 
             mask = np.abs(points[:, dim] - slice_pos) <= tol
             pts = points[mask]
 
             if pts.shape[0] > 0:
-                px, py, xlim, ylim = project_points(pts, dim)
+                px, py = project_points(pts, dim)
                 ax.scatter(
                     py,
                     px,
-                    s=point_size,
-                    c=[cmap_obj(0.8)],
-                    alpha=alpha,
+                    s=size,
+                    # c=[cmap_obj(0.8)],
+                    c=color,
+                    alpha=pts_alpha,
                     edgecolors="none",
                 )
 
-            if i == 0:
-                legend_elements.append(
-                    Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
-                )
+            legend_elements.append(
+                # Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
+                Patch(facecolor=color, edgecolor="none", label=label)
+            )
 
-        if show_title:
-            ax.set_title(f"{slice_index}/{dim_size}")
+    if show_title:
+        ax.set_title(f"{slice_index}/{dim_size}")
 
-        ax.set_xlim(-1, 1)
-        ax.set_ylim(-1, 1)
-        ax.axis("off")
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+    ax.axis("off")
 
-    for j in range(n_slices, len(axes)):
-        axes[j].axis("off")
-
-    if legend_elements:
-        fig.legend(
-            handles=legend_elements,
-            loc="upper right",
-            frameon=True,
-            fontsize=9,
-        )
-
-    plt.tight_layout()
-    plt.show()
+    if show_legend and legend_elements:
+        ax.legend(handles=legend_elements, loc="upper right", frameon=True, fontsize=9)
 
 
 def overlay_points_on_cryoet_ori(
@@ -2197,3 +2436,52 @@ def napari_sign_labeler(
     return viewer, pts_plus, pts_minus
 
 
+
+
+
+def resize_cryoet_to_cube(cryoet, N_voxel, fill_value=0):
+    """
+    Resize a 3D voxel array to (N_voxel, N_voxel, N_voxel)
+    by symmetric padding or cropping along each axis.
+
+    Parameters
+    ----------
+    cryoet : np.ndarray
+        Input 3D array with shape (nx, ny, nz).
+    N_voxel : int
+        Target size for each axis.
+    fill_value : scalar, optional
+        Value used for padding. Default is 0.
+
+    Returns
+    -------
+    np.ndarray
+        Resized 3D array of shape (N_voxel, N_voxel, N_voxel).
+    """
+    if cryoet.ndim != 3:
+        raise ValueError(f"Input must be 3D, but got shape {cryoet.shape}")
+
+    out = np.full((N_voxel, N_voxel, N_voxel), fill_value, dtype=cryoet.dtype)
+
+    src_slices = []
+    dst_slices = []
+
+    for old_size in cryoet.shape:
+        if old_size >= N_voxel:
+            # crop source
+            start_src = (old_size - N_voxel) // 2
+            end_src = start_src + N_voxel
+            start_dst = 0
+            end_dst = N_voxel
+        else:
+            # pad into destination
+            start_src = 0
+            end_src = old_size
+            start_dst = (N_voxel - old_size) // 2
+            end_dst = start_dst + old_size
+
+        src_slices.append(slice(start_src, end_src))
+        dst_slices.append(slice(start_dst, end_dst))
+
+    out[tuple(dst_slices)] = cryoet[tuple(src_slices)]
+    return out

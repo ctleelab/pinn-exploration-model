@@ -14,7 +14,7 @@ LAMBDA_1 = 100000.0
 LAMBDA_2 = 0.005
 
 class PINN(nn.Module):
-    hidden_dim: int = 16  # Hidden layer size
+    hidden_dim: int = 256  # Hidden layer size
     num_frequencies: int = 10 # Number of frequencies for positional encoding
 
     @nn.compact

@@ -16,6 +16,7 @@ Thumbs.db
 # Ignore log files and temporary files
 logs/
 *.log
+tutorial/output/
 
 # Ignore large data files (optional)
 data/

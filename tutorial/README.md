@@ -1,7 +1,7 @@
 # Physics-Regulated Neural Reconstruction of Membrane
 
 <p align="center">
-  <img src="./asset/overview_pinn.png" width="700">
+  <img src="./asset/overview_pinn.png" width="800">
 </p>
 
 Reconstruct 3D membrane surfaces with curvature-level accuracy using a physics-informed neural network (PINN). The workflow consists of three main steps:

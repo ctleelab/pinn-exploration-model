@@ -1,0 +1,82 @@
+Patched jax.experimental.layout.DeviceLocalLayout -> <class 'jax._src.layout.Layout'>
+Pretraining the network using SDF...
+[bud_04] pretrain=uniform lambdas=(100000, 0, 100000, 0.001, 1000, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase0_100000_0_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase0_100000_0_100000_0/result.png
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase0_100000_0_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 0, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase1_100000_1_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase1_100000_1_100000_0/result.png
+/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase1_100000_1_100000_0/checkpoint_10000
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase1_100000_1_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 10, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase2_100000_1_100000_10
+[make_train_step] mode = curv
+  use_curv = True
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz64/phase2_100000_1_100000_10/result.png
+Pretraining the network using SDF...
+[bud_04] pretrain=uniform lambdas=(100000, 0, 100000, 0.001, 1000, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase0_100000_0_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase0_100000_0_100000_0/result.png
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase0_100000_0_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 0, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase1_100000_1_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase1_100000_1_100000_0/result.png
+/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase1_100000_1_100000_0/checkpoint_10000
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase1_100000_1_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 10, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase2_100000_1_100000_10
+[make_train_step] mode = curv
+  use_curv = True
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz32/phase2_100000_1_100000_10/result.png
+Pretraining the network using SDF...
+[bud_04] pretrain=uniform lambdas=(100000, 0, 100000, 0.001, 1000, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase0_100000_0_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase0_100000_0_100000_0/result.png
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase0_100000_0_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 0, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase1_100000_1_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase1_100000_1_100000_0/result.png
+/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase1_100000_1_100000_0/checkpoint_10000
+Initial shape from: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase1_100000_1_100000_0/checkpoint_10000
+Use pretrained data as initial condition...
+[bud_04] pretrain=checkpoint lambdas=(100000, 1, 100000, 10, 0, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase2_100000_1_100000_10
+[make_train_step] mode = curv
+  use_curv = True
+  use_lapH = False
+  use_forc = False
+  0%|          | 0/10000 [00:00<?, ?it/s]
+Saved: /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/bud_04/data_0321/a010_m04_g128_gz16/phase2_100000_1_100000_10/result.png

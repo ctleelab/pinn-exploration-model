@@ -355,8 +355,39 @@ def save_pts_data(data, path, meta=None):
     np.savez(path, **out)
 
 
-def load_pts_data(path, perm=(0, 1, 2)):
+# def load_pts_data(path, perm=(0, 1, 2)):
+#     """
+#     Returns:
+#       data : dict with keys
+#         - "points" : (N, 3)
+#         - "label"  : (N,) or None
+#         - "meta"   : dict or None
+#     """
+#     npz = np.load(path, allow_pickle=True)
+
+#     pts = npz["points"]
+#     pts = pts[:, perm]
+
+#     data = {
+#         "points": pts,
+#         "label": None,
+#         "meta": None,
+#     }
+
+#     if "label" in npz.files:
+#         data["label"] = npz["label"]
+
+#     if "meta" in npz.files:
+#         data["meta"] = npz["meta"].item()
+
+#     return data
+
+def load_pts_data(path, perm=(0, 1, 2), scale=None):
     """
+    Args:
+      perm  : axis permutation (e.g., (2,0,1))
+      scale : None, float, or (sx, sy, sz)
+
     Returns:
       data : dict with keys
         - "points" : (N, 3)
@@ -366,7 +397,20 @@ def load_pts_data(path, perm=(0, 1, 2)):
     npz = np.load(path, allow_pickle=True)
 
     pts = npz["points"]
+
+    # --- permute axes ---
     pts = pts[:, perm]
+
+    # --- apply scaling ---
+    if scale is not None:
+        scale = np.asarray(scale)
+
+        if scale.ndim == 0:
+            # uniform scaling
+            pts = pts * scale
+        else:
+            # per-axis scaling
+            pts = pts * scale[None, :]   # broadcast (N,3) * (1,3)
 
     data = {
         "points": pts,

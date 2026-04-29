@@ -23,7 +23,7 @@ from pinn.utils import (
     save_ckpt, pick, sample_surface_points, save_pts_data
 )
 
-from pinn.cryoet_io import load_mrc_data
+import tifffile as tiff
 from pinn.plot import (
     visualize_cryoET_with_contours,
     visualize_phase,
@@ -41,20 +41,12 @@ NUM_CHECKPOINTS_TO_KEEP = 1000
 
 def plot_result(
     checkpoint_dir, 
-    shape, 
-    grid_size=64, 
-    grid_size_z=None,
-    wedge_angle=None,
+    data_id,
+    shape,
     steps_to_visualize=(0, 1000, 5000, 10000), 
-    save_interval=100, 
-    additive=0.15, 
-    missing =0.6,
+    save_interval=100,
+    axis = "x",
 ):
-    str_add = f"{additive:.2f}".replace('.', '')
-    str_miss = f"{missing:.1f}".replace('.', '')
-    
-    slice_index = grid_size // 2
-    axis = "z"
 
     # Decide which checkpoints to load (based on your save interval)
     max_step = max(steps_to_visualize)
@@ -74,13 +66,11 @@ def plot_result(
         return
 
     # ---- Load cryoET volume ----
-    mrc_file_path = f"../data/synthetic/mrc/{shape}_a{str_add}_m{str_miss}.mrc"
-    if wedge_angle is not None:
-        mrc_file_path = f"../data/synthetic/mrc/{shape}_a{str_add}_m{str_miss}_wz{wedge_angle}.mrc"
-    # mrc_file_path = f"../data/synthetic/mrc/{shape}_a000_m00.mrc"
-    cryoET_data = load_mrc_data(mrc_file_path, grid_size=grid_size)
-    if grid_size_z is not None:
-        cryoET_data = load_mrc_data(mrc_file_path, grid_size=(grid_size_z, grid_size, grid_size))
+    tif_file_path = f"../data/experimental/vol/formatted/{data_id}/{shape}.tif"
+    cryoET_data = tiff.imread(tif_file_path)
+    cryoET_data = 1 - cryoET_data
+    grid_size = cryoET_data.shape[0]
+    slice_index = grid_size // 2
 
     # ---- Make figure ----
     fig = plt.figure(figsize=(3 * 4, 12))
@@ -136,32 +126,19 @@ def plot_result(
 
 
 def sample_curv_points(
+    data_id: str,
     shape: str,
     lambda_1: float = 100000,
     lambda_2: float = 10,    
     lambda_3: float = 100000,
     num_curv: int   = 5000,
-    additive: float = 0.15,
-    missing : float = 0.6,
-    grid_size: int  = 128,
-    grid_size_z: int  = None,
-    wedge_angle: int = None,
     seed    : int   = 0,
-    data_type: str = "data_0321", 
     step    : int   = 10000,
 ):
     key = jax.random.PRNGKey(seed)
-    str_add = f"{additive:.2f}".replace('.', '')
-    str_miss = f"{missing:.1f}".replace('.', '')
-
-    dire_id = f"a{str_add}_m{str_miss}_g{grid_size}"
-    if grid_size_z is not None:
-        dire_id = f"a{str_add}_m{str_miss}_g{grid_size}_gz{grid_size_z}"
-    if wedge_angle is not None:
-        dire_id = f"a{str_add}_m{str_miss}_wz{wedge_angle}"
 
     checkpoint_dir = os.path.abspath(
-        f"../outputs/logs/{shape}/{data_type}/{dire_id}/"
+        f"../outputs/logs/{data_id}/{shape}/"
         f"phase1_{lambda_1}_{lambda_2}_{lambda_3}_0"
     )
 
@@ -175,22 +152,15 @@ def sample_curv_points(
 
     ## ===== STORE META DATA ========
     meta_curv = {
+        "shape"   : shape,
         "type"    : "curv",
         "n_sample": num_curv,
         "seed"    : seed,
         "phi_fn"  : checkpoint_path,
-        "additive": additive, 
-        "missing" : missing, 
-        "grid_size": grid_size,
-        "grid_size_z": grid_size_z,
     }
 
-    save_data_dir = f"../data/synthetic/pts/curv/a{str_add}_m{str_miss}_g{grid_size}"
-    if grid_size_z is not None:
-        save_data_dir = f"../data/synthetic/pts/curv/a{str_add}_m{str_miss}_g{grid_size}_gz{grid_size_z}"
-    if wedge_angle is not None:
-        save_data_dir = f"../data/synthetic/pts/curv/a{str_add}_m{str_miss}_wz{wedge_angle}"
-    save_path = f"{save_data_dir}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
+    save_data_dir = f"../data/experimental/pts/curv/{data_id}"
+    save_path = f"{save_data_dir}/pt_c_{shape}.npz"
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     save_pts_data(data_curv, save_path, meta_curv)
 
@@ -198,6 +168,7 @@ def sample_curv_points(
 
 
 def run_one(
+    data_id: str,
     shape: str,
     sdf_pretrain: str,
     lambda_1: float = 100000,
@@ -211,23 +182,13 @@ def run_one(
     num_steps: int = 10000,
     save_interval: int = 100,
     learning_rate: float = 1e-3,
-    warmup_steps: int = 1000, # 2000
+    warmup_steps: int = 1000,
     init_ckpt_path: str | None = None,
-    additive: float = 0.15,
-    missing: float = 0.6,
-    grid_size: int = 64,
-    grid_size_z: int = None,
-    wedge_angle: int = None,
+    voxel_scale: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ):
     key = jax.random.PRNGKey(seed)
-    str_add = f"{additive:.2f}".replace('.', '')
-    str_miss = f"{missing:.1f}".replace('.', '')
 
-    root_dir = f"../outputs/logs/{shape}/data_0321/a{str_add}_m{str_miss}_g{grid_size}"
-    if grid_size_z is not None:
-        root_dir = f"../outputs/logs/{shape}/data_0321/a{str_add}_m{str_miss}_g{grid_size}_gz{grid_size_z}"
-    if wedge_angle is not None:
-         root_dir = f"../outputs/logs/{shape}/data_0321/a{str_add}_m{str_miss}_wz{wedge_angle}"
+    root_dir = f"../outputs/logs/{data_id}/{shape}"
     checkpoint_dir = os.path.abspath(f"{root_dir}/phase{phase}_{lambda_1}_{lambda_2}_{lambda_3}_{lambda_4}")
 
     init_ckpt = None
@@ -241,22 +202,12 @@ def run_one(
         print("Initial shape from:", init_ckpt_path)
 
     # ===== LOAD POINT DATA =====
-    pts_path = f"../data/synthetic/pts"
-    edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}_g{grid_size}.npz", perm=(2,1,0))
-    if grid_size_z is not None:
-        edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}_g{grid_size}_gz{grid_size_z}.npz", perm=(2,1,0))
-    if wedge_angle is not None:
-        edge = load_pts_data(f"{pts_path}/edge/e_{shape}_a{str_add}_m{str_miss}_wz{wedge_angle}.npz", perm=(2,1,0))
-    # sign = load_pts_data(f"{pts_path}/sign/{shape}_manual_signs.npz", perm=(2,1,0))
-    sign = load_pts_data(f"{pts_path}/sign/s_{shape}.npz", perm=(2,1,0))
-    phys = load_pts_data(f"{pts_path}/phys/p_{shape}.npz", perm=(2,1,0))
+    pts_path = f"../data/experimental/pts"
+    edge = load_pts_data(f"{pts_path}/edge/{data_id}/pt_e_{shape}.npz", perm=(2,1,0), scale=voxel_scale)
+    sign = load_pts_data(f"{pts_path}/sign/{data_id}/pt_s_{shape}.npz", perm=(2,1,0), scale=voxel_scale)
+    phys = load_pts_data(f"{pts_path}/phys/pt_p_general.npz", perm=(2,1,0))
     if phase == 2:
-        file = f"a{str_add}_m{str_miss}_g{grid_size}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
-        if grid_size_z is not None:
-            file = f"a{str_add}_m{str_miss}_g{grid_size}_gz{grid_size_z}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
-        if wedge_angle is not None:
-            file = f"a{str_add}_m{str_miss}_wz{wedge_angle}/c_{shape}_{lambda_1}_{lambda_2}_{lambda_3}.npz"
-        curv = load_pts_data(f"{pts_path}/curv/{file}", perm=(2,1,0))
+        curv = load_pts_data(f"{pts_path}/curv/{data_id}/pt_c_{shape}.npz", perm=(2,1,0))
     else:
         curv = load_pts_data(f"{pts_path}/curv/dummy.npz", perm=(2,1,0))
 
@@ -337,14 +288,10 @@ def run_one(
 
     plot_result(
         checkpoint_dir=checkpoint_dir,
+        data_id=data_id,
         shape=shape,
-        grid_size=grid_size,
-        grid_size_z=grid_size_z,
-        wedge_angle=wedge_angle,
         steps_to_visualize=(0, 1000, 5000, 10000),
         save_interval=save_interval,
-        additive=additive, 
-        missing=missing,
     )
 
     return
@@ -354,73 +301,56 @@ def run_one(
 #      MAIN SIMULATION
 # =========================
 
-# shape = "bud_04"
+data_id = "jrc_cos7-1b"
+# shape = "bud-11"
 lambda_1 = 100000  # data loss
 lambda_2 = 1       # phys loss
 lambda_3 = 100000  # sign loss
-lambda_4 = 10     # curv loss
+lambda_4 = 10      # curv loss
 lambda_5 = 0       # lapH loss (not used)
 lambda_6 = 0       # forc loss (not used)
+voxel_scale = (1.27, 1.0, 1.0)
 
-additive = 0.1
-missing  = 0.4
-grid_size = 128
-grid_size_z = None
-wedge_angle = None
 
-# for grid_size_z in [64, 32, 16]:
-# for grid_size_z in [64]:
-# for wedge_angle in [80, 70, 60]:
-# for shape in ["bud_04", "biconcave"]:
-for shape in ["biconcave"]:
-
+for shape in ["bud-07", "bud-09", "bud-10", "bud-12"]:
     # Phase 0: lambda_2 = 0, lambda_4 = 0
     run_one(
+        data_id=data_id,
         shape=shape,
         sdf_pretrain="uniform",
         lambda_1=lambda_1,
         lambda_2=0,
         lambda_3=lambda_3,
         num_steps=10000,
-        additive= additive,
-        missing = missing,
-        grid_size = grid_size,
-        grid_size_z = grid_size_z,
-        wedge_angle = wedge_angle,
         phase = 0,
+        voxel_scale=voxel_scale,
     )
 
     # Phase 1: lambda_2 != 0, lambda_4 = 0
     run_one(
+        data_id=data_id,
         shape=shape,
         sdf_pretrain="checkpoint",
         lambda_1=lambda_1,
         lambda_2=lambda_2,
         lambda_3=lambda_3,
         num_steps=10000,
-        additive=additive,
-        missing = missing,
-        grid_size = grid_size,
-        grid_size_z = grid_size_z,
-        wedge_angle = wedge_angle,
         phase = 1,
+        voxel_scale=voxel_scale,    
     )
 
     sample_curv_points(
+        data_id=data_id,
         shape=shape,
         lambda_1=lambda_1,
         lambda_2=lambda_2,
-        lambda_3=lambda_3,    
-        additive=additive,
-        missing = missing,
-        grid_size = grid_size,
-        grid_size_z = grid_size_z,
-        wedge_angle = wedge_angle,
+        lambda_3=lambda_3,
         num_curv = 5000,
     )
 
     # Phase 2: lambda_2 != 0, lambda_4 != 0
     run_one(
+        data_id=data_id,
         shape=shape,
         sdf_pretrain="checkpoint",
         lambda_1=lambda_1,
@@ -428,10 +358,6 @@ for shape in ["biconcave"]:
         lambda_3=lambda_3,
         lambda_4=lambda_4,
         num_steps=10000,
-        additive=additive,
-        missing = missing,
-        grid_size = grid_size,
-        grid_size_z = grid_size_z,
-        wedge_angle = wedge_angle,
         phase = 2,
+        voxel_scale=voxel_scale,
     )

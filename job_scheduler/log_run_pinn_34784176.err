@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/notebooks/routine_curv.py", line 363, in <module>
+    
+    
+  File "/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/notebooks/routine_curv.py", line 299, in run_one
+    "forc_loss":  pick(init_d, "forc_loss", "forc", default=0.0),
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mmfs1/gscratch/matsulab/sim/pinn-exploration-model/src/pinn/utils.py", line 769, in save_ckpt
+    checkpoints.save_checkpoint(
+  File "/gscratch/matsulab/envs/pinn-env/lib/python3.12/site-packages/flax/training/checkpoints.py", line 693, in save_checkpoint
+    orbax_checkpointer.save(
+  File "/gscratch/matsulab/envs/pinn-env/lib/python3.12/site-packages/orbax/checkpoint/_src/checkpointers/checkpointer.py", line 254, in save
+    raise ValueError(f'Destination {directory} already exists.')
+ValueError: Destination /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/biconcave/data_0321/a010_m04_g128_gz64/phase0_100000_0_100000_0/checkpoint_0 already exists.

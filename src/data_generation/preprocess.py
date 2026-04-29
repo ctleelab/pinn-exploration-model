@@ -780,6 +780,7 @@ def overlay_points_on_cryoet_ax(
     tol=None,
     show_title=False,
     show_legend=False,
+    expand_xy=None,
 ):
     cryoet = np.asarray(cryoet)
     axis_to_dim = {"x": 0, "y": 1, "z": 2}
@@ -850,15 +851,25 @@ def overlay_points_on_cryoet_ax(
 
             if pts.shape[0] > 0:
                 px, py = project_points(pts, dim)
-                ax.scatter(
-                    py,
-                    px,
-                    s=size,
-                    # c=[cmap_obj(0.8)],
-                    c=color,
-                    alpha=pts_alpha,
-                    edgecolors="none",
-                )
+
+                # optional crop+rescale in the in-plane directions
+                if expand_xy is not None:
+                    in_view = (
+                        (np.abs(px) <= expand_xy) &
+                        (np.abs(py) <= expand_xy)
+                    )
+                    px = px[in_view] / expand_xy
+                    py = py[in_view] / expand_xy
+                if px.size > 0:
+                    ax.scatter(
+                        py,
+                        px,
+                        s=size,
+                        # c=[cmap_obj(0.8)],
+                        c=color,
+                        alpha=pts_alpha,
+                        edgecolors="none",
+                    )
 
             legend_elements.append(
                 # Patch(facecolor=cmap_obj(0.8), edgecolor="none", label=label)
@@ -866,7 +877,7 @@ def overlay_points_on_cryoet_ax(
             )
 
     if show_title:
-        ax.set_title(f"{slice_index}/{dim_size}")
+        ax.set_title(f"{axis} = {slice_index}/{dim_size}", fontsize=20)
 
     ax.set_xlim(-1, 1)
     ax.set_ylim(-1, 1)
@@ -2438,26 +2449,7 @@ def napari_sign_labeler(
 
 
 
-
 def resize_cryoet_to_cube(cryoet, N_voxel, fill_value=0):
-    """
-    Resize a 3D voxel array to (N_voxel, N_voxel, N_voxel)
-    by symmetric padding or cropping along each axis.
-
-    Parameters
-    ----------
-    cryoet : np.ndarray
-        Input 3D array with shape (nx, ny, nz).
-    N_voxel : int
-        Target size for each axis.
-    fill_value : scalar, optional
-        Value used for padding. Default is 0.
-
-    Returns
-    -------
-    np.ndarray
-        Resized 3D array of shape (N_voxel, N_voxel, N_voxel).
-    """
     if cryoet.ndim != 3:
         raise ValueError(f"Input must be 3D, but got shape {cryoet.shape}")
 
@@ -2465,16 +2457,15 @@ def resize_cryoet_to_cube(cryoet, N_voxel, fill_value=0):
 
     src_slices = []
     dst_slices = []
+    transforms = []
 
     for old_size in cryoet.shape:
         if old_size >= N_voxel:
-            # crop source
             start_src = (old_size - N_voxel) // 2
             end_src = start_src + N_voxel
             start_dst = 0
             end_dst = N_voxel
         else:
-            # pad into destination
             start_src = 0
             end_src = old_size
             start_dst = (N_voxel - old_size) // 2
@@ -2482,6 +2473,16 @@ def resize_cryoet_to_cube(cryoet, N_voxel, fill_value=0):
 
         src_slices.append(slice(start_src, end_src))
         dst_slices.append(slice(start_dst, end_dst))
+        transforms.append({
+            "start_src": start_src,
+            "end_src": end_src,
+            "start_dst": start_dst,
+            "end_dst": end_dst,
+            "shift": start_dst - start_src,
+        })
 
     out[tuple(dst_slices)] = cryoet[tuple(src_slices)]
-    return out
+
+    return out, transforms
+
+

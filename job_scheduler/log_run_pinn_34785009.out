@@ -1,0 +1,7 @@
+Patched jax.experimental.layout.DeviceLocalLayout -> <class 'jax._src.layout.Layout'>
+Pretraining the network using SDF...
+[biconcave] pretrain=uniform lambdas=(100000, 0, 100000, 0.001, 1000, 0) -> /mmfs1/gscratch/matsulab/sim/pinn-exploration-model/outputs/logs/biconcave/data_0321/a010_m04_g128_gz64/phase0_100000_0_100000_0
+[make_train_step] mode = base
+  use_curv = False
+  use_lapH = False
+  use_forc = False

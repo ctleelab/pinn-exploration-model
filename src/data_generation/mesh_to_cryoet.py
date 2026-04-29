@@ -639,7 +639,7 @@ def generate_cryoet_from_vtk(
     # Missing wedge effect
     if missing_wedge is True:
         if wedge_axis is not None:
-            pseudo_cryoET = remove_wedge(pseudo_cryoET, axis=wedge_axis)
+            pseudo_cryoET = remove_wedge(pseudo_cryoET, axis=wedge_axis, tilt_max_deg=tilt_max)
         else:
             u0 = np.array([1.0, 0.0, 0.0])   # +Z in (Z,Y,X)
             axis_rot = np.array([0.0, 1.0, 0.0])  # +Y

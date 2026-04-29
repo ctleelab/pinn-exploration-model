@@ -126,6 +126,9 @@ def calc_norm_curv_K_force(
     sigma=0.0,                  # tension σ
     compute_force=True,
     batch_size=4096,            # chunking for expensive 4th-derivative ops
+
+    half_length=1.0,            # physical half-length per axis
+    hidden_dim=128,
 ):
     """
     Returns:
@@ -150,13 +153,20 @@ def calc_norm_curv_K_force(
         x_range=x_range,
         y_range=y_range,
         z_range=z_range,
+        hidden_dim=hidden_dim,
     )
     faces = faces.astype(np.int32)
 
     # --- 2) NN φ(x) and derivatives at verts ---
-    model = PINN()
+    model = PINN(hidden_dim=hidden_dim)
     params = checkpoint["state"]["params"]
     phi_fn_pts = lambda pts: model.apply(params, pts)  # expects (N,3)
+
+    # voxel_scale = jnp.asarray((half_length, half_length, half_length))
+    # def phi_fn_pts(pts):
+    #     pts = jnp.asarray(pts)                 # pts in physical coordinates
+    #     pts_norm = pts / voxel_scale           # convert physical -> normalized
+    #     return model.apply(params, pts_norm)   # expects (N,3)
 
     verts_j = jnp.asarray(verts)  # (N,3)
 
@@ -225,6 +235,11 @@ def calc_norm_curv_K_force(
         force = np.asarray(jnp.concatenate(out_force, axis=0))
 
     theta = np.arccos(normals @ (1,0,0))
+
+    scale = half_length / 1.0
+    verts = verts * scale
+    curv  = curv  / scale
+    gauss = gauss / (scale**2)
 
     return verts, faces, normals, theta, curv, gauss, force
 
@@ -1679,7 +1694,9 @@ def plot_ablation(
 
     for shape in shape_list:
         for phase in phase_list:
-            y = [metric_dict[shape][phase][x_val] for x_val in x_values]
+            # y = [metric_dict[shape][phase][x_val] for x_val in x_values]
+            y = [metric_dict[shape][phase].get(x_val, np.nan) for x_val in x_values]
+
 
             ax.plot(
                 x,

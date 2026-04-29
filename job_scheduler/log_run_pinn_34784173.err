@@ -1,0 +1,6 @@
+E0422 19:00:41.772157   55139 buffer_comparator.cc:150] Difference at 340484: -14, expected -9.01774
+E0422 19:00:41.872888   55139 buffer_comparator.cc:150] Difference at 340484: -14, expected -9.01774
+E0422 19:00:41.970725   55139 buffer_comparator.cc:150] Difference at 340484: -14, expected -9.01774
+E0422 19:00:42.070835   55139 buffer_comparator.cc:150] Difference at 340484: -12, expected -9.01774
+E0422 19:00:42.172391   55139 buffer_comparator.cc:150] Difference at 340484: -12, expected -9.01774
+E0422 19:00:42.271692   55139 buffer_comparator.cc:150] Difference at 340484: -12, expected -9.01774

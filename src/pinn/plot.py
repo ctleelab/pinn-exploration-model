@@ -274,14 +274,19 @@ def visualize_cryoET_with_contours(
     no_label=False,
     thresholding=False,
     expand_xy=None,   # <-- add this
+    voxel_scale=(1.0, 1.0, 1.0), 
+    hidden_dim=128,
 ):
     state = checkpoint["state"]
     params = state["params"]
-    model = PINN()
+    model = PINN(hidden_dim=hidden_dim)
+    voxel_scale = jnp.asarray(voxel_scale)
 
     @jax.jit
     def phi_batched(x):  # (N,3) -> (N,) or (N,1)
-        out = model.apply(params, x)
+        x_scaled = x * voxel_scale[None, :]   # apply per-axis scaling
+        # out = model.apply(params, x)
+        out = model.apply(params, x_scaled)
         return out.reshape(-1)
 
     # ---- your “other function” mechanism, copied faithfully ----
@@ -879,6 +884,7 @@ def compute_isosurface_mesh_from_checkpoint(
     x_range=None,   # e.g. (-0.5, 0.5)
     y_range=None,   # e.g. (-1.0, 0.2)
     z_range=None,   # e.g. (-0.5, 0.5)
+    hidden_dim=128,
 ):
     # --- full normalized grids (-1..1) ---
     x = jnp.linspace(-1, 1, grid_size)
@@ -909,7 +915,7 @@ def compute_isosurface_mesh_from_checkpoint(
     X, Y, Z = jnp.meshgrid(x_sub, y_sub, z_sub, indexing="ij")  # axes (x,y,z)
     grid_points = jnp.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
 
-    model = PINN()
+    model = PINN(hidden_dim=hidden_dim)
     params = checkpoint["state"]["params"]
 
     def phi_fn(xyz):
@@ -1155,7 +1161,10 @@ def visualize_phase(
     batch=4096,
     run_on_cpu=False,
     expand_xy=None, 
+    voxel_scale=(1.0, 1.0, 1.0),
+    hidden_dim=128,
 ):
+    voxel_scale = jnp.asarray(voxel_scale)
     valid_components = ["phi", "tension", "bending"]
     if component not in valid_components:
         raise ValueError(f"Invalid component '{component}'. Must be one of {valid_components}.")
@@ -1166,8 +1175,9 @@ def visualize_phase(
             raise ValueError("Either `phi_fn` or `checkpoint` must be provided.")
         state = checkpoint["state"]
         params = state["params"]
-        model = PINN()
-        phi_fn = lambda x: model.apply(params, x)
+        model = PINN(hidden_dim=hidden_dim)
+        # phi_fn = lambda x: model.apply(params, x)
+        phi_fn = lambda x: model.apply(params, x * voxel_scale[None, :])
     else:
         params = None  # unknown
 
@@ -1191,7 +1201,8 @@ def visualize_phase(
             state = jax.device_put(state, cpu)
             params = state["params"]
             model = PINN()
-            phi_fn = lambda x: model.apply(params, x)
+            # phi_fn = lambda x: model.apply(params, x)
+            phi_fn = lambda x: model.apply(params, x * voxel_scale[None, :])
 
     phi_batched = lambda P: _batch_apply(lambda Q: phi_fn(Q).squeeze(), P, batch=batch)
 

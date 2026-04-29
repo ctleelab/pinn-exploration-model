@@ -74,7 +74,7 @@ def plot_synthetic_cryoET(cryoET_data, grid_size=64):
     plt.show()
 
 
-def load_mrc_data(file_path, grid_size=64, clip=1.0, normalize_mrc=True):
+def load_mrc_data(file_path, grid_size=None, clip=1.0, normalize_mrc=True):
     """
     Loads a 3D cryo-ET membrane image from an MRC file and normalizes it.
     
@@ -95,19 +95,21 @@ def load_mrc_data(file_path, grid_size=64, clip=1.0, normalize_mrc=True):
         mrc_data = np.minimum(mrc_data / clip, 1.0)
 
     # Determine target shape
-    if isinstance(grid_size, int):
-        target_shape = (grid_size, grid_size, grid_size)
-    elif isinstance(grid_size, tuple) and len(grid_size) == 3:
-        target_shape = grid_size
-    else:
-        raise ValueError("grid_size must be either an int or a tuple of 3 integers.")
+    if grid_size is not None:
 
-    # Resize if needed
-    if mrc_data.shape != target_shape:
-        # print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
-        from skimage.transform import resize
-        mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
-        mrc_data = jnp.array(mrc_data)
+        if isinstance(grid_size, int):
+            target_shape = (grid_size, grid_size, grid_size)
+        elif isinstance(grid_size, tuple) and len(grid_size) == 3:
+            target_shape = grid_size
+        else:
+            raise ValueError("grid_size must be either an int or a tuple of 3 integers.")
+
+        # Resize if needed
+        if mrc_data.shape != target_shape:
+            # print(f"Resizing MRC data from {mrc_data.shape} to {target_shape}")
+            from skimage.transform import resize
+            mrc_data = resize(mrc_data, target_shape, mode='reflect', anti_aliasing=True)
+            mrc_data = jnp.array(mrc_data)
 
     return mrc_data
 

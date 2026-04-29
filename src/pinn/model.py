@@ -10,10 +10,6 @@ GRID_SIZE = 128
 # GRID_SIZE = 200
 
 class PINN(nn.Module):
-    # hidden_dim: int = 64  # Hidden layer size
-    # hidden_dim: int = 16  # Hidden layer size
-    # hidden_dim: int = 256  # Hidden layer size
-    # hidden_dim: int = 512  # Hidden layer size
     hidden_dim: int = 128  # Hidden layer size
     # num_frequencies: int = 10 # Number of frequencies for positional encoding
 

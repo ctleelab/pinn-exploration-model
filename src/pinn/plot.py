@@ -775,6 +775,64 @@ def plot_normalized_loss_history_ax(ax, id, assembled_loss):
         ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
+def plot_unnormalized_loss_history_ax(ax, id, assembled_loss):
+    """
+    Plot three normalized loss functions (Data Loss, Physics Loss, and Total Loss) side by side.
+    Each function is scaled by its initial value at step = 0.
+
+    Args:
+        assembled_loss (dict): Aggregated loss history containing 'step', 'total_loss', 'data_loss', 'physics_loss'.
+    """
+
+    # Normalize loss values by their initial step=0 value
+    data_loss = assembled_loss["data_loss"]
+    sign_loss = assembled_loss["sign_loss"]
+    phys_loss = assembled_loss["phys_loss"]
+    curv_loss = assembled_loss["curv_loss"]
+    total_loss = assembled_loss["total_loss"]
+
+
+    if id == 0:
+        ax.plot(assembled_loss["step"], total_loss, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Total Loss")
+        ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    elif id == 1: 
+        ax.plot(assembled_loss["step"], data_loss, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Data Loss")
+        ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    elif id == 2:
+        ax.plot(assembled_loss["step"], sign_loss, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Boundary Loss")
+        ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value")        
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+    elif id == 3:
+        ax.plot(assembled_loss["step"], phys_loss, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Physics Loss")
+        ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value")        
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)        
+
+    elif id == 4:
+        ax.plot(assembled_loss["step"], curv_loss, marker='o', linestyle='-')
+        ax.set_yscale('log')
+        ax.set_title("Smoothing Loss")
+        ax.set_xlabel("Steps")
+        ax.set_ylabel("Loss Value")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+
+
 def plot_phase_metrics_ax(ax, checkpoint, metrics, epsilon=0.05, grid_size=64, V_0=None, A_0=None):
 
     x = jnp.linspace(-1, 1, grid_size)

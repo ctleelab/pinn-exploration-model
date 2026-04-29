@@ -344,10 +344,10 @@ def make_train_step(use_curv=False, use_lapH=False, use_forc=False):
     if use_forc: mode.append("forc")
     mode_str = "+".join(mode) if mode else "base"
 
-    print(f"[make_train_step] mode = {mode_str}")
-    print(f"  use_curv = {use_curv}")
-    print(f"  use_lapH = {use_lapH}")
-    print(f"  use_forc = {use_forc}")
+    # print(f"[make_train_step] mode = {mode_str}")
+    # print(f"  use_curv = {use_curv}")
+    # print(f"  use_lapH = {use_lapH}")
+    # print(f"  use_forc = {use_forc}")
 
     def train_step(state, step, data_edge, data_sign, data_phys, data_curv):
         def compute_losses(params):
@@ -441,8 +441,8 @@ def plot_loss_history_ax(ax, assembled_loss):
     ax.plot(assembled_loss["step"], assembled_loss["sign_loss"], label='Sign Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["curv_loss"], label='Curvature Loss', marker='^', linestyle='-')
     ax.plot(assembled_loss["step"], assembled_loss["lapH_loss"], label='Laplacian Loss', marker='^', linestyle='-')
-    ax.plot(assembled_loss["step"], assembled_loss["forc_loss"], label='Force Loss', marker='^', linestyle='-')
-    ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
+    # ax.plot(assembled_loss["step"], assembled_loss["forc_loss"], label='Force Loss', marker='^', linestyle='-')
+    # ax.plot(assembled_loss["step"], assembled_loss["total_loss"], label='Total Loss', marker='^', linestyle='-')
 
     # Use log scale for better visualization (especially if physics loss is large)
     ax.set_yscale('log')

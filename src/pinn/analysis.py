@@ -1,867 +1,876 @@
-import numpy as np
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
 import jax
 import jax.numpy as jnp
-from pinn.model import PINN
-from pinn.model import phase_volume, phase_surface, phase_bend
-import mrcfile
-from skimage import measure
-import trimesh
-from pinn.cryoet_io import load_mrc_data
 import matplotlib.pyplot as plt
-import os
-from matplotlib.ticker import LogLocator
+import numpy as np
+from scipy.spatial import cKDTree
 
+from pinn.model import PINN, grad_phi, hessian_phi
+from pinn.plot import compute_isosurface_mesh_from_checkpoint
 
-def calc_area_seg(ckpt_dat, epsilon, sampling, grid_size=64, num_point=10000):
-	
-	if sampling == "grid":
-		x = jnp.linspace(-1, 1, grid_size)
-		y = jnp.linspace(-1, 1, grid_size)
-		z = jnp.linspace(-1, 1, grid_size)
-		sample_points = jnp.stack(jnp.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-	elif sampling == "random":
-		key = jax.random.PRNGKey(0)
-		sample_points = jax.random.uniform(key, (num_point, 3), minval=-1, maxval=1)
 
-	state  = ckpt_dat["state"]
-	params = state["params"]
-	model  = PINN()
-	phi_fn = lambda x: model.apply(params, x)
+# ---------------------------------------------------------------------
+# Differential-geometry helpers
+# ---------------------------------------------------------------------
 
-	value = phase_surface(phi_fn, sample_points, epsilon)
 
-	return value
+def adjugate_3x3_batched(matrices: jax.Array) -> jax.Array:
+    """Compute adjugates of batched 3×3 matrices.
 
-
-def calc_bend_mem(mrc_path, iso_value=None, rescale=True, verbose=True):
-## IT DOES NOT LOOK CORRECT ##
-
-    """
-    Calculate bending energy (∫ H^2 dS) of a membrane surface 
-    extracted from an MRC volume.
-
-    Args:
-        mrc_path (str): Path to the .mrc file
-        iso_value (float): Threshold for marching cubes (default: mean of volume)
-        rescale (bool): If True, rescales box to [-1,1]^3
-        verbose (bool): If True, prints diagnostics
-
-    Returns:
-        float: Estimated bending energy
-    """
-    # --- Load MRC ---
-    with mrcfile.open(mrc_path) as mrc:
-        volume = mrc.data.astype(np.float32)
-    nx, ny, nz = volume.shape
-
-    if iso_value is None:
-        iso_value = float(np.mean(volume))
-
-    # --- Extract surface with marching cubes ---
-    verts, faces, _, _ = measure.marching_cubes(volume, level=iso_value)
-
-    # Rescale vertices to [-1,1]^3
-    if rescale:
-        verts[:, 0] = 2.0 * verts[:, 0] / nx - 1.0
-        verts[:, 1] = 2.0 * verts[:, 1] / ny - 1.0
-        verts[:, 2] = 2.0 * verts[:, 2] / nz - 1.0
-
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-
-    # --- Compute bending energy ---
-    V = mesh.vertices
-    F = mesh.faces
-    face_areas = mesh.area_faces
-
-    n_vertices = len(V)
-    W = np.zeros((n_vertices, n_vertices))
-    A_mixed = np.zeros(n_vertices)
-
-    for tri, area in zip(F, face_areas):
-        i, j, k = tri
-        vi, vj, vk = V[i], V[j], V[k]
-
-        # edge vectors
-        e_ij = vi - vj
-        e_jk = vj - vk
-        e_ki = vk - vi
-
-        # avoid division by zero
-        def cot(a, b):
-            cross = np.cross(a, b)
-            return np.dot(a, b) / (np.linalg.norm(cross) + 1e-12)
-
-        cot_alpha = cot(vj - vi, vk - vi)
-        cot_beta  = cot(vi - vj, vk - vj)
-        cot_gamma = cot(vi - vk, vj - vk)
-
-        # symmetric weights
-        W[i, j] += cot_gamma; W[j, i] += cot_gamma
-        W[j, k] += cot_alpha; W[k, j] += cot_alpha
-        W[k, i] += cot_beta;  W[i, k] += cot_beta
-
-        # distribute face area
-        for v in tri:
-            A_mixed[v] += area / 3.0
-
-    # Laplace-Beltrami
-    H_vec = np.zeros((n_vertices, 3))
-    for i in range(n_vertices):
-        neighbors = np.nonzero(W[i])[0]
-        for j in neighbors:
-            H_vec[i] += W[i, j] * (V[i] - V[j])
-
-    H = np.linalg.norm(H_vec, axis=1) / (2 * A_mixed + 1e-12)
-
-    # ∫ H^2 dS
-    energy = np.sum((H**2) * A_mixed)
-
-    if verbose:
-        print(f"Bending energy: {energy:.6f}")
-        print(f"Surface area: {mesh.area:.6f}, Watertight: {mesh.is_watertight}")
-
-    return energy
-
-
-def calc_area_mem(mrc_path, iso_value=None):
-    """
-	Calculate the membrane surface area from an MRC volume using marching cubes.
-	Because marching cubes produce a doubled membrane, the resulting area is divided by two.
-	Before applying this correction, you should verify that the extracted surface is reasonable
-	i.e., that the membrane is sufficiently thin so that the two surfaces truly represent a doubled membrane.
-	This validation can be performed by visualizing the surface in the notebook analysis_synthetic.ipynb
-    """
-
-    # Load volume
-    with mrcfile.open(mrc_path) as mrc:
-        volume = mrc.data.astype(np.float32)
-    nx, ny, nz = volume.shape
-
-    # Choose iso-value
-    if iso_value is None:
-        iso_value = float(np.mean(volume))
-
-    # Marching cubes in voxel space
-    verts, faces, normals, values = measure.marching_cubes(volume, level=iso_value)
-
-    # Rescale vertices to [-1,1]^3
-    verts[:, 0] = 2.0 * verts[:, 0] / nx - 1.0
-    verts[:, 1] = 2.0 * verts[:, 1] / ny - 1.0
-    verts[:, 2] = 2.0 * verts[:, 2] / nz - 1.0
-
-    # Mesh & surface area
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
-    
-    return mesh.area / 2.0
-
-
-def calc_bend_seg(ckpt_dat, epsilon, kappa, sampling, grid_size=64, num_point=10000):
-	
-	if sampling == "grid":
-		x = jnp.linspace(-1, 1, grid_size)
-		y = jnp.linspace(-1, 1, grid_size)
-		z = jnp.linspace(-1, 1, grid_size)
-		sample_points = jnp.stack(jnp.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-	elif sampling == "random":
-		key = jax.random.PRNGKey(0)
-		sample_points = jax.random.uniform(key, (num_point, 3), minval=-1, maxval=1)
-
-	state  = ckpt_dat["state"]
-	params = state["params"]
-	model  = PINN()
-	phi_fn = lambda x: model.apply(params, x)
-
-	value = phase_bend(phi_fn, sample_points, epsilon, kappa)
-
-	return value
-
-
-def calc_vol_seg(ckpt_dat, sampling, grid_size=64, num_point=10000):
-    
-    if sampling == "grid":
-        x = jnp.linspace(-1, 1, grid_size)
-        y = jnp.linspace(-1, 1, grid_size)
-        z = jnp.linspace(-1, 1, grid_size)
-        sample_points = jnp.stack(jnp.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-    elif sampling == "random":
-        key = jax.random.PRNGKey(0)
-        sample_points = jax.random.uniform(key, (num_point, 3), minval=-1, maxval=1)
-
-    state  = ckpt_dat["state"]
-    params = state["params"]
-    model  = PINN()
-    phi_fn = lambda x: model.apply(params, x)
-
-    value = phase_volume(phi_fn, sample_points)
-
-    return value
-
-
-def dice_loss(mrc_path, ckpt_dat, grid_size=64, threshold=0.8, band_thickness=0.05):
-    """
-    Compute Dice loss between ground-truth membrane (from MRC)
-    and predicted membrane (phi=0 contour).
-    
-    Args:
-        mrc_path (str): path to ground-truth .mrc file
-        ckpt_dat: checkpoint dict containing segmentation model state
-        grid_size (int): sampling resolution
-        band_thickness (float): thickness around phi=0 for prediction mask
-
-    Returns:
-        float: Dice loss
-    """
-    # --- Ground truth from MRC ---
-    gt_volume = load_mrc_data(mrc_path, grid_size=grid_size)
-    gt_mask = (gt_volume > threshold).astype(np.uint8)
-
-    # --- Prediction from phi ---
-    state  = ckpt_dat["state"]
-    params = state["params"]
-    model  = PINN()
-    phi_fn = lambda x: model.apply(params, x)
-
-    # Sample voxel grid
-    x = np.linspace(-1, 1, grid_size)
-    y = np.linspace(-1, 1, grid_size)
-    z = np.linspace(-1, 1, grid_size)
-    grid = np.stack(np.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-
-    phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
-
-    # # Prediction membrane mask: band around phi=0
-    # pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
-
-    # Prediction membrane mask: using marching cube
-    pitch = 2.0 / grid_size
-    phi_vals = np.array(phi_vals)
-    phi_vals = np.pad(phi_vals, 1, mode="edge")
-    verts, faces, _, _ = measure.marching_cubes(
-        phi_vals, level=0.0, spacing=(pitch, pitch, pitch)
-    )
-    verts = verts - 1.0 - pitch/2
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces)  
-
-    pred_mask = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
-    idx = ((verts + 1) / pitch).astype(int)  # map [-1,1] → [0, grid_size)
-    for v in idx:
-        if np.all((v >= 0) & (v < grid_size)):
-            pred_mask[tuple(v)] = 1
-
-
-    # --- Dice calculation ---
-    intersection = np.sum(gt_mask * pred_mask)
-    volume_sum = np.sum(gt_mask) + np.sum(pred_mask)
-    dice = (2. * intersection) / (volume_sum + 1e-8)
-
-    # print("intersection: ", intersection)
-    # print("gt: ", np.sum(gt_mask))
-    # print("pd: ", np.sum(pred_mask))
-    # print("volume_sum: ", volume_sum)
-
-    return 1 - dice   # Dice loss
-
-
-def surface_dice(
-    mrc_path, ckpt_dat, grid_size=64, thre_sklt = 0.8, 
-    threshold=0.8, band_thickness=0.05):
-    """
-    Compute surface Dice between ground-truth membrane (from MRC)
-    and predicted membrane (phi=0 contour).
-    
-    Args:
-        mrc_path (str): path to ground-truth .mrc file
-        ckpt_dat: checkpoint dict containing segmentation model state
-        grid_size (int): sampling resolution
-        thre_sklt (float): threshold for skeletnization
-        threshold (float): threshold for membrane mask
-        band_thickness (float): thickness around phi=0 for prediction mask
-
-    Returns:
-        float: surface Dice loss (1 - Dice) <- this is None if marching cube failed
-    """
-    # --- Ground truth from MRC ---
-    gt_volume = load_mrc_data(mrc_path, grid_size=grid_size)
-    gt_sklt = (gt_volume > thre_sklt).astype(np.uint8)
-    gt_mask = (gt_volume > threshold).astype(np.uint8)
-
-    # --- Prediction from phi ---
-    state  = ckpt_dat["state"]
-    params = state["params"]
-    model  = PINN()
-    phi_fn = lambda x: model.apply(params, x)
-
-    # Sample voxel grid
-    x = np.linspace(-1, 1, grid_size)
-    y = np.linspace(-1, 1, grid_size)
-    z = np.linspace(-1, 1, grid_size)
-    grid = np.stack(np.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-
-    phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
-
-    # Prediction membrane mask: band around phi=0
-    pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
-
-    # Prediction membrane mask: using marching cube
-    pitch = 2.0 / grid_size
-    phi_vals = np.array(phi_vals)
-    phi_vals = np.pad(phi_vals, 1, mode="edge")
-    # verts, faces, _, _ = measure.marching_cubes(
-    #     phi_vals, level=0.0, spacing=(pitch, pitch, pitch)
-    # )
-    try:
-        verts, faces, _, _ = measure.marching_cubes(
-            phi_vals,
-            level=0.0,
-            spacing=(pitch, pitch, pitch),
-        )
-    except (ValueError, RuntimeError) as e:
-        # marching cubes failed
-        return None
-
-    verts = verts - 1.0 - pitch/2
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces)  
-
-    pred_sklt = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
-    idx = ((verts + 1) / pitch).astype(int)  # map [-1,1] → [0, grid_size)
-    for v in idx:
-        if np.all((v >= 0) & (v < grid_size)):
-            pred_sklt[tuple(v)] = 1
-
-    # --- Dice calculation ---
-    precision = np.sum(pred_sklt * gt_mask) / np.sum(pred_sklt)
-    recall = np.sum(gt_sklt * pred_mask) / np.sum(gt_sklt)
-    dice = 2 * (precision * recall) / (precision + recall)
-
-    # print("gt_sklt: ", np.sum(gt_sklt))
-    # print("gt_mask: ", np.sum(gt_mask))
-    # print("pred_sklt: ", np.sum(pred_sklt))
-    # print("pred_mask: ", np.sum(pred_mask))
-
-    # return 1 - dice
-    return dice
-
-
-def get_masks(mrc_path, dat_seg, grid_size=64, thre_sklt=0.8, threshold=0.8, band_thickness=0.05):
-    """
-    Generate ground-truth and predicted masks for Dice evaluation.
-
-    Args:
-        mrc_path (str): Path to ground-truth MRC file
-        dat_seg: checkpoint dict containing segmentation model state
-        grid_size (int): Sampling resolution for prediction
-        band_thickness (float): Thickness around φ=0 used to define membrane band
-
-    Returns:
-        (gt_mask, pred_mask): two 3D numpy arrays of shape (grid_size, grid_size, grid_size)
-    """
-    # --- Ground truth from MRC (resized to grid_size) ---
-    gt_volume = load_mrc_data(mrc_path, grid_size=grid_size)
-    gt_sklt = (gt_volume > thre_sklt).astype(np.uint8)
-    gt_mask = (gt_volume > threshold).astype(np.uint8)
-
-    # --- Prediction from φ ---
-    state  = dat_seg["state"]
-    params = state["params"]
-    model  = PINN()
-    phi_fn = lambda x: model.apply(params, x)
-
-    x = np.linspace(-1, 1, grid_size)
-    y = np.linspace(-1, 1, grid_size)
-    z = np.linspace(-1, 1, grid_size)
-    grid = np.stack(np.meshgrid(x, y, z, indexing="ij"), axis=-1).reshape(-1, 3)
-
-    phi_vals = phi_fn(grid).reshape(grid_size, grid_size, grid_size)
-
-    # mask using band_thickness
-    pred_mask = (np.abs(phi_vals) < band_thickness).astype(np.uint8)
-
-    # mask using marching cube
-    pitch = 2.0 / grid_size
-    phi_vals = np.array(phi_vals)
-    phi_vals = np.pad(phi_vals, 1, mode="edge")
-    verts, faces, _, _ = measure.marching_cubes(
-        phi_vals, level=0.0, spacing=(pitch, pitch, pitch)
-    )
-    verts = verts - 1.0 - pitch/2
-    mesh = trimesh.Trimesh(vertices=verts, faces=faces)  
-
-    pred_sklt = np.zeros((grid_size, grid_size, grid_size), dtype=np.uint8)
-    idx = ((verts + 1) / pitch).astype(int)  # map [-1,1] → [0, grid_size)
-    for v in idx:
-        if np.all((v >= 0) & (v < grid_size)):
-            pred_sklt[tuple(v)] = 1
-
-    return gt_mask, gt_sklt, pred_mask, pred_sklt
-
-
-
-def visualize_masks(gt_mask, pred_mask, slice_idx=None, axis=0):
-    """
-    Visualize 2D slices of ground-truth and predicted masks.
-
-    Args:
-        gt_mask (ndarray): Ground-truth mask (3D binary array).
-        pred_mask (ndarray): Predicted mask (3D binary array).
-        slice_idx (int): Which slice index to show (default: middle).
-        axis (int): Axis along which to slice (0=z, 1=y, 2=x).
-    """
-    assert gt_mask.shape == pred_mask.shape, "GT and prediction must have same shape"
-    shape = gt_mask.shape
-
-    # Choose middle slice if none provided
-    if slice_idx is None:
-        slice_idx = shape[axis] // 2
-
-    if axis == 0:   # z-slice
-        gt_slice = gt_mask[slice_idx, :, :]
-        pred_slice = pred_mask[slice_idx, :, :]
-    elif axis == 1: # y-slice
-        gt_slice = gt_mask[:, slice_idx, :]
-        pred_slice = pred_mask[:, slice_idx, :]
-    elif axis == 2: # x-slice
-        gt_slice = gt_mask[:, :, slice_idx]
-        pred_slice = pred_mask[:, :, slice_idx]
-    else:
-        raise ValueError("axis must be 0, 1, or 2")
-
-    # Plot
-    fig, axs = plt.subplots(1, 3, figsize=(9, 3))
-
-    axs[0].imshow(gt_slice, cmap="gray")
-    axs[0].set_title("Ground Truth Mask")
-    axs[0].axis("off")
-
-    axs[1].imshow(pred_slice, cmap="gray")
-    axs[1].set_title("Predicted Mask")
-    axs[1].axis("off")
-
-    # Overlay
-    axs[2].imshow(gt_slice, cmap="gray")
-    axs[2].imshow(pred_slice, cmap="jet", alpha=0.5)
-    axs[2].set_title("Overlay")
-    axs[2].axis("off")
-
-    plt.tight_layout()
-    plt.show()
-
-
-def load_accuracy_progress(path, step_shift=0):
-
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Metrics file not found: {path}")
-
-    data = np.load(path, allow_pickle=True)
-    steps = data["steps"].astype(np.int64) + step_shift
-
-    out = {
-        "steps":   steps,
-        "dice":    data["dice"],
-        "volume":  data["volume"],
-        "area":    data["area"],
-        "bending": data["bending"],
-        "meta":    data["meta"].item(),  # stored as object
-    }
-    return out
-
-
-
-def smooth(y, window=5):
-    if window <= 1:
-        return y
-
-    y = np.asarray(y)
-    pad = window // 2
-    y_pad = np.pad(y, pad_width=pad, mode="reflect")
-    kernel = np.ones(window) / window
-    return np.convolve(y_pad, kernel, mode="valid")
-
-
-
-
-def plot_accuracy_progress(
-    curves,
-    shape_list,
-    lambda_2_list,
-    legend_order=None,
-    figsize=(14, 3.2),
-    show_legend=True,
-    smooth_window=7,
-):
-    """
     Parameters
     ----------
-    curves : dict
-        curves[(shape, lambda_2)] = {
-            "steps", "dice", "dV", "dA", "dB"
-        }
-
-    shape_list : list of str
-        Shapes to plot (defines color order)
-
-    lambda_2_list : list of int
-        Lambda_2 values (defines linestyle)
-
-    legend_order : list of (shape, lambda_2), optional
-        Explicit legend order. If None, defaults to shape-major order.
+    matrices
+        Array with shape ``(N, 3, 3)``.
 
     Returns
     -------
-    fig, axes
+    jax.Array
+        Adjugate matrices with shape ``(N, 3, 3)``.
     """
-
-    # ----------------------------
-    # Figure / axes
-    # ----------------------------
-    fig, axes = plt.subplots(1, 4, figsize=figsize, sharex=True)
-    ax_dice, ax_vol, ax_area, ax_bend = axes
-
-    for ax in axes:
-        ax.set_xlabel("Step (×10³)")
-        ax.grid(True, alpha=0.2)
-
-    ax_dice.set_title("Surface Dice")
-    ax_vol.set_title("Volume")
-    ax_area.set_title("Surface Area")
-    ax_bend.set_title("Bending Energy")
-
-    ax_dice.set_ylabel("1 - Dice")
-    ax_vol.set_ylabel(r"$\Delta V / V_0$")
-    ax_area.set_ylabel(r"$\Delta A / A_0$")
-    ax_bend.set_ylabel(r"$\Delta E_b / E_{b0}$")
-
-    ax_dice.set_yticks([0, 0.2])
-    ax_vol.set_yticks([0, 0.15])
-    ax_area.set_yticks([0, 0.25])
-    ax_bend.set_yticks([0, 13])
-
-    ax_dice.set_ylim(-0.01, 0.21)
-    # ax_dice.set_ylim(0, 0.2)
-    # ax_vol.set_ylim(0, 1)
-    # ax_area.set_ylim(0, 2)
-    # ax_bend.set_ylim(0, 600)
-
-    ax_dice.yaxis.labelpad = -4
-    ax_vol.yaxis.labelpad  = -4
-    ax_area.yaxis.labelpad = -4
-    ax_bend.yaxis.labelpad = -6
-
-
-
-    # ax_dice.set_yscale("log")
-    # ax_vol.set_yscale("log")
-    # ax_area.set_yscale("log")
-    # ax_bend.set_yscale("log")
-
-    # ----------------------------
-    # Color map: one color per shape
-    # ----------------------------
-    default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    color_map = {
-        "biconcave": "red",  
-        "bud_04":    "blue", 
-        "multi":     "green",
-    }    
-    # color_map = {
-    #     shape: default_colors[i % len(default_colors)]
-    #     for i, shape in enumerate(shape_list)
-    # }
-
-    # ----------------------------
-    # Legend order
-    # ----------------------------
-    if legend_order is None:
-        legend_order = [
-            (shape, lambda_2)
-            for shape in shape_list
-            for lambda_2 in lambda_2_list
-        ]
-
-    # ----------------------------
-    # Plot
-    # ----------------------------
-    handles, labels = [], []
-
-    for shape, lambda_2 in legend_order:
-        # ls  = "--" if lambda_2 == 0 else "-"
-        ls  = (0, (4, 2)) if lambda_2 == 0 else "-"
-        # ls  = ":" if lambda_2 == 0 else "-"
-        col = color_map[shape]
-
-        c = curves[(shape, lambda_2)]
-        x = c["steps"] / 1000.0
-        lw = 0.6
-        # smooth_window = 7
-
-        y_dice = smooth(c["dice"], window=smooth_window)
-        y_dV   = smooth(c["dV"],   window=smooth_window)
-        y_dA   = smooth(c["dA"],   window=smooth_window)
-        y_dB   = smooth(c["dB"],   window=smooth_window)        
-
-        h, = ax_dice.plot(
-            x, y_dice,
-            linestyle=ls, color=col, linewidth=lw
-        )
-        ax_vol.plot(
-            x, y_dV,
-            linestyle=ls, color=col, linewidth=lw
-        )
-        ax_area.plot(
-            x, y_dA,
-            linestyle=ls, color=col, linewidth=lw
-        )
-        ax_bend.plot(
-            x, y_dB,
-            linestyle=ls, color=col, linewidth=lw
+    if matrices.ndim != 3 or matrices.shape[1:] != (3, 3):
+        raise ValueError(
+            "matrices must have shape (N, 3, 3), "
+            f"but received {matrices.shape}."
         )
 
-        handles.append(h)
-        labels.append(f"λ2={lambda_2}, {shape}")
+    a00 = matrices[:, 0, 0]
+    a01 = matrices[:, 0, 1]
+    a02 = matrices[:, 0, 2]
+    a10 = matrices[:, 1, 0]
+    a11 = matrices[:, 1, 1]
+    a12 = matrices[:, 1, 2]
+    a20 = matrices[:, 2, 0]
+    a21 = matrices[:, 2, 1]
+    a22 = matrices[:, 2, 2]
 
-    if show_legend:
-        ax_dice.legend(handles, labels, loc="best", fontsize=9)
+    cofactor_00 = a11 * a22 - a12 * a21
+    cofactor_01 = -(a10 * a22 - a12 * a20)
+    cofactor_02 = a10 * a21 - a11 * a20
 
-    for ax in axes:
-        ax.grid(False)
+    cofactor_10 = -(a01 * a22 - a02 * a21)
+    cofactor_11 = a00 * a22 - a02 * a20
+    cofactor_12 = -(a00 * a21 - a01 * a20)
 
-        # vertical line for step = 10000
-        ax.axvline(
-            10,
-            linestyle="--",
-            color="k",
-            linewidth=0.4,
-            alpha=0.7,
-        )
+    cofactor_20 = a01 * a12 - a02 * a11
+    cofactor_21 = -(a00 * a12 - a02 * a10)
+    cofactor_22 = a00 * a11 - a01 * a10
 
-        ax.set_xticks([0, 10, 20])
-        # ax.yaxis.labelpad = -2
+    return jnp.stack(
+        [
+            jnp.stack(
+                [cofactor_00, cofactor_10, cofactor_20],
+                axis=1,
+            ),
+            jnp.stack(
+                [cofactor_01, cofactor_11, cofactor_21],
+                axis=1,
+            ),
+            jnp.stack(
+                [cofactor_02, cofactor_12, cofactor_22],
+                axis=1,
+            ),
+        ],
+        axis=1,
+    )
 
-        ax.set_title(ax.get_title(), pad=2)
-        ax.set_xlabel(ax.get_xlabel(), labelpad=0)
 
-
-    fig.subplots_adjust(wspace=0.6)
-
-    return fig, axes
-
-
-
-from matplotlib.ticker import LogLocator, NullFormatter
-from matplotlib.ticker import MaxNLocator, ScalarFormatter
-
-def plot_loss_panels_old(
-    assembled_loss,
-    shape_list,
-    lambda_2_list,
-    legend_order=None,
-    figsize=(14, 3.2),
-    logscale_keys=None,
-    show_legend=True,
-    smooth_window=7,
-    linewidth=0.6,
+def make_point_geometry_functions(
+    phi_fn,
+    normal_eps: float = 1e-8,
+    curvature_eps: float = 1e-8,
 ):
+    """Create pointwise normal, mean-curvature, and Gaussian-curvature functions."""
+
+    def normal_at_point(point: jax.Array) -> jax.Array:
+        gradient = grad_phi(phi_fn, point[None, :])[0]
+        gradient_norm = jnp.sqrt(
+            jnp.dot(gradient, gradient) + normal_eps**2
+        )
+        return gradient / gradient_norm
+
+    def kappa_at_point(point: jax.Array) -> jax.Array:
+        gradient = grad_phi(phi_fn, point[None, :])[0]
+        hessian = hessian_phi(phi_fn, point[None, :])[0]
+
+        gradient_norm = jnp.sqrt(
+            jnp.dot(gradient, gradient) + curvature_eps**2
+        )
+        laplacian = jnp.trace(hessian)
+        gradient_hessian_gradient = jnp.dot(
+            gradient,
+            hessian @ gradient,
+        )
+
+        return (
+            laplacian / gradient_norm
+            - gradient_hessian_gradient / gradient_norm**3
+        )
+
+    def gaussian_curvature_at_point(point: jax.Array) -> jax.Array:
+        gradient = grad_phi(phi_fn, point[None, :])[0]
+        hessian = hessian_phi(phi_fn, point[None, :])[0]
+
+        gradient_norm = jnp.sqrt(
+            jnp.dot(gradient, gradient) + curvature_eps**2
+        )
+        normal = gradient / jnp.sqrt(
+            jnp.dot(gradient, gradient) + normal_eps**2
+        )
+
+        adjugate = adjugate_3x3_batched(
+            hessian[None, :, :]
+        )[0]
+
+        return (
+            normal @ adjugate @ normal
+        ) / gradient_norm**2
+
+    return (
+        normal_at_point,
+        kappa_at_point,
+        gaussian_curvature_at_point,
+    )
+
+
+def surface_laplacian_of_scalar(
+    scalar_fn,
+    normal_fn,
+):
+    """Create a function evaluating the surface Laplacian of a scalar field.
+
+    The surface Laplacian is computed as
+
+    ``div((I - n nᵀ) grad(f))``.
     """
-    1×3 loss panels:
-      [data_loss | sign_loss | phys_loss]
-    Legend occupies the previous 'total_loss' position on the right.
-    Matches plot_accuracy_progress() appearance exactly.
+
+    def surface_gradient(point: jax.Array) -> jax.Array:
+        normal = normal_fn(point)
+        projection = (
+            jnp.eye(3, dtype=point.dtype)
+            - jnp.outer(normal, normal)
+        )
+        gradient = jax.grad(scalar_fn)(point)
+        return projection @ gradient
+
+    def surface_laplacian(point: jax.Array) -> jax.Array:
+        jacobian = jax.jacfwd(surface_gradient)(point)
+        return jnp.trace(jacobian)
+
+    return surface_laplacian
+
+
+# ---------------------------------------------------------------------
+# Surface analysis
+# ---------------------------------------------------------------------
+
+
+def calc_norm_curv_K_force(
+    checkpoint: Mapping[str, Any],
+    grid_size: int = 64,
+    normal_eps: float = 1e-8,
+    curvature_eps: float = 1e-8,
+    curvature_kind: str = "H",
+    transpose: bool = True,
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
+    z_range: tuple[float, float] | None = None,
+    level: float = 0.0,
+    kappa_b: float = 1.0,
+    sigma: float = 0.0,
+    compute_force: bool = True,
+    batch_size: int = 4096,
+    half_length: float = 1.0,
+    hidden_dim: int = 128,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray | None,
+]:
+    """Compute mesh geometry and an optional Helfrich force.
+
+    Returns
+    -------
+    vertices
+        Mesh vertices with shape ``(N, 3)``.
+    faces
+        Triangle indices with shape ``(M, 3)``.
+    normals
+        Outward-oriented normal vectors with shape ``(N, 3)``.
+    theta
+        Angle between each normal and the positive x-axis.
+    curvature
+        Either ``kappa = div(n)`` or ``H = kappa / 2``.
+    gaussian_curvature
+        Gaussian curvature at each mesh vertex.
+    force
+        Force vectors with shape ``(N, 3)``, or ``None`` when disabled.
     """
+    curvature_kind = curvature_kind.lower()
 
-    loss_keys   = ["data_loss", "sign_loss", "phys_loss"]
-    loss_titles = ["Data Loss", "Boundary Loss", "Physics Loss"]
+    if curvature_kind not in {"h", "kappa"}:
+        raise ValueError(
+            "curvature_kind must be 'H' or 'kappa'."
+        )
 
-    if logscale_keys is None:
-        logscale_keys = []
+    if batch_size <= 0:
+        raise ValueError(
+            f"batch_size must be positive, but received {batch_size}."
+        )
 
-    # --- same colors as plot_accuracy_progress ---
-    color_map = {
-        "biconcave": "red",
-        "bud_04":    "blue",
-        "multi":     "green",
-        "czii_gl_1":  "black",
-        "mend_3":     "black",
-    }
+    if half_length <= 0:
+        raise ValueError(
+            f"half_length must be positive, but received {half_length}."
+        )
 
-    # --- same linestyle logic (λ2=0 dashed) ---
-    def ls_for_lambda(lambda_2):
-        return (0, (4, 2)) if int(lambda_2) == 0 else "-"
+    vertices, faces = compute_isosurface_mesh_from_checkpoint(
+        checkpoint=checkpoint,
+        grid_size=grid_size,
+        level=level,
+        transpose=transpose,
+        x_range=x_range,
+        y_range=y_range,
+        z_range=z_range,
+        hidden_dim=hidden_dim,
+    )
+    faces = faces.astype(np.int32)
 
-    if legend_order is None:
-        legend_order = [
-            (shape, lambda_2)
-            for shape in shape_list
-            for lambda_2 in lambda_2_list
-        ]
+    model = PINN(hidden_dim=hidden_dim)
+    params = checkpoint["state"]["params"]
 
-    # ----------------------------
-    # Figure / axes (1×3 panels)
-    # ----------------------------
-    fig, axes = plt.subplots(1, 3, figsize=figsize, sharex=True)
+    def phi_fn(points: jax.Array) -> jax.Array:
+        return model.apply(params, points)
 
-    handles, labels = [], []
+    vertices_jax = jnp.asarray(vertices)
 
-    for ax, key, title in zip(axes, loss_keys, loss_titles):
+    gradients = grad_phi(phi_fn, vertices_jax)
+    hessians = hessian_phi(phi_fn, vertices_jax)
 
-        for shape, lambda_2 in legend_order:
-            hist = assembled_loss[shape][lambda_2]
+    gradient_norm = jnp.sqrt(
+        jnp.sum(gradients**2, axis=1)
+        + normal_eps**2
+    )
+    normals_jax = gradients / gradient_norm[:, None]
 
-            x = np.asarray(hist["step"]) / 1000.0
-            y = np.asarray(hist[key])
+    laplacian = jnp.trace(
+        hessians,
+        axis1=1,
+        axis2=2,
+    )
+    gradient_hessian_gradient = jnp.einsum(
+        "ni,nij,nj->n",
+        gradients,
+        hessians,
+        gradients,
+    )
 
-            # ---- smoothing (same as accuracy plot) ----
-            y_s = smooth(y, window=smooth_window)
+    curvature_norm = jnp.sqrt(
+        jnp.sum(gradients**2, axis=1)
+        + curvature_eps**2
+    )
 
-            h, = ax.plot(
-                x, y_s,
-                linestyle=ls_for_lambda(lambda_2),
-                color=color_map[shape],
-                linewidth=linewidth,
+    kappa = (
+        laplacian / curvature_norm
+        - gradient_hessian_gradient / curvature_norm**3
+    )
+
+    adjugates = adjugate_3x3_batched(hessians)
+    gaussian_numerator = jnp.einsum(
+        "ni,nij,nj->n",
+        normals_jax,
+        adjugates,
+        normals_jax,
+    )
+    gaussian_curvature = (
+        gaussian_numerator / curvature_norm**2
+    )
+
+    # Preserve the original orientation convention.
+    normals = -np.asarray(normals_jax)
+
+    if curvature_kind == "h":
+        curvature_jax = -0.5 * kappa
+    else:
+        curvature_jax = -kappa
+
+    force = None
+
+    if compute_force:
+        normal_fn, kappa_fn, _ = make_point_geometry_functions(
+            phi_fn,
+            normal_eps=normal_eps,
+            curvature_eps=curvature_eps,
+        )
+        surface_laplacian_fn = surface_laplacian_of_scalar(
+            kappa_fn,
+            normal_fn,
+        )
+        batched_surface_laplacian = jax.vmap(
+            surface_laplacian_fn
+        )
+
+        force_batches = []
+        n_vertices = vertices_jax.shape[0]
+
+        for start in range(0, n_vertices, batch_size):
+            stop = min(start + batch_size, n_vertices)
+            point_batch = vertices_jax[start:stop]
+
+            surface_laplacian = batched_surface_laplacian(
+                point_batch
             )
 
-            # collect legend entries once
-            if ax is axes[0]:
-                handles.append(h)
-                labels.append(f"λ2={lambda_2}, {shape}")
+            kappa_batch = kappa[start:stop]
+            gaussian_batch = gaussian_curvature[start:stop]
+            normal_batch = normals_jax[start:stop]
 
-        # ---- styling (identical to accuracy plot) ----
-        ax.set_title(title, pad=2)
-        ax.set_xlabel("Step (×10³)", labelpad=0)
-        ax.set_ylabel("Loss")
-        ax.grid(False)
-
-        if key in logscale_keys:
-            ax.set_yscale("log")
-
-        ax.axvline(
-            10,
-            linestyle="--",
-            color="k",
-            linewidth=0.4,
-            alpha=0.7,
-        )
-
-        ax.set_xticks([0, 10, 20])
-        # ax.yaxis.labelpad = 0
-
-
-    # ----------------------------
-    # Legend placed in the old 4th column
-    # ----------------------------
-    if show_legend:
-        fig.legend(
-            handles,
-            [
-                r"Closed, $\lambda_p=0$",
-                r"Closed, $\lambda_p=10$",
-                r"Open, $\lambda_p=0$",
-                r"Open, $\lambda_p=10$",
-                r"Multiple, $\lambda_p=0$",
-                r"Multiple, $\lambda_p=10$",
-            ],
-            loc="center right",
-            frameon=False,
-            labelspacing=0.0,
-        )
-
-    # Leave space on the right for the legend
-    # fig.subplots_adjust(wspace=0.6, right=0.7)
-    fig.subplots_adjust(wspace=0.7, left=0.2)
-
-    return fig, axes
-
-
-
-def plot_loss_panels(
-    assembled_loss,
-    shape_list,
-    legend_order=None,
-    figsize=(18, 3.2),
-    logscale_keys=None,
-    show_legend=True,
-    smooth_window=7,
-    linewidth=0.8,
-):
-    """
-    1×5 loss panels:
-      [data_loss | sign_loss | phys_loss | curv_loss | total_loss]
-
-    Assumes merged global steps:
-      phase 0:   0 - 10000
-      phase 1:   10000 - 20000
-      phase 2:   20000 - 30000
-
-    phys_loss is shown only from phase 1 onward.
-    curv_loss is shown only from phase 2 onward.
-    """
-
-    loss_keys = ["data_loss", "sign_loss", "phys_loss", "curv_loss", "total_loss"]
-    loss_titles = ["Data Loss", "Boundary Loss", "Physics Loss", "Smoothness Loss", "Total Loss"]
-
-    if logscale_keys is None:
-        logscale_keys = []
-
-    color_map = {
-        "biconcave": "red",
-        "bud_04": "blue",
-    }
-
-    if legend_order is None:
-        legend_order = shape_list
-
-    fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True)
-
-    handles, labels = [], []
-
-    for ax, key, title in zip(axes, loss_keys, loss_titles):
-        for shape in legend_order:
-            hist = assembled_loss[shape]
-
-            x = np.asarray(hist["step"])
-            y = np.asarray(hist[key], dtype=float)
-
-            # ---- phase masking ----
-            if key == "phys_loss":
-                y = np.where(x >= 10000, y, np.nan)
-            elif key == "curv_loss":
-                y = np.where(x >= 20000, y, np.nan)
-
-            # ---- smoothing ----
-            y_s = smooth(y, window=smooth_window)
-
-            h, = ax.plot(
-                x / 1000.0,
-                y_s,
-                color=color_map.get(shape, None),
-                linewidth=linewidth,
+            # Active formula preserved from the original implementation.
+            force_normal = (
+                kappa_b
+                * (
+                    surface_laplacian
+                    - kappa_batch**3
+                    + 2.0
+                    * kappa_batch
+                    * gaussian_batch
+                )
+                + sigma * kappa_batch
             )
 
-            if ax is axes[0]:
-                handles.append(h)
-                labels.append(shape)
+            force_batches.append(
+                force_normal[:, None] * normal_batch
+            )
 
-        ax.set_title(title, pad=2)
-        ax.set_xlabel("Step (×10³)", labelpad=0)
-        ax.set_ylabel("Loss")
-        ax.grid(False)
-
-        if key in logscale_keys:
-            ax.set_yscale("log")
-
-        ax.axvline(10, linestyle="--", color="k", linewidth=0.4, alpha=0.7)
-        ax.axvline(20, linestyle="--", color="k", linewidth=0.4, alpha=0.7)
-
-        ax.set_xticks([0, 10, 20, 30])
-
-    if show_legend:
-        fig.legend(
-            handles,
-            labels,
-            loc="center right",
-            frameon=False,
-            labelspacing=0.0,
+        force = np.asarray(
+            jnp.concatenate(force_batches, axis=0)
         )
 
-    fig.subplots_adjust(wspace=0.7, left=0.08, right=0.82)
+    theta = np.arccos(
+        np.clip(
+            normals @ np.array([1.0, 0.0, 0.0]),
+            -1.0,
+            1.0,
+        )
+    )
 
-    return fig, axes
+    scale = half_length
+    vertices = vertices * scale
+    curvature = np.asarray(curvature_jax) / scale
+    gaussian_curvature_np = (
+        np.asarray(gaussian_curvature) / scale**2
+    )
+
+    return (
+        vertices,
+        faces,
+        normals,
+        theta,
+        curvature,
+        gaussian_curvature_np,
+        force,
+    )
+
+
+# ---------------------------------------------------------------------
+# Mesh input/output
+# ---------------------------------------------------------------------
+
+
+def write_vtk_polydata(
+    filename: str | Path,
+    vertices: Any,
+    faces: Any,
+    point_vectors: Mapping[str, Any] | None = None,
+    point_scalars: Mapping[str, Any] | None = None,
+) -> None:
+    """Write a triangular mesh as legacy ASCII VTK POLYDATA."""
+    filename = Path(filename)
+
+    vertices_array = np.asarray(
+        vertices,
+        dtype=np.float64,
+    )
+    faces_array = np.asarray(
+        faces,
+        dtype=np.int64,
+    )
+
+    if (
+        vertices_array.ndim != 2
+        or vertices_array.shape[1] != 3
+    ):
+        raise ValueError(
+            "vertices must have shape (N, 3), "
+            f"but received {vertices_array.shape}."
+        )
+
+    if (
+        faces_array.ndim != 2
+        or faces_array.shape[1] != 3
+    ):
+        raise ValueError(
+            "faces must have shape (M, 3), "
+            f"but received {faces_array.shape}."
+        )
+
+    vector_fields = (
+        {}
+        if point_vectors is None
+        else dict(point_vectors)
+    )
+    scalar_fields = (
+        {}
+        if point_scalars is None
+        else dict(point_scalars)
+    )
+
+    n_vertices = vertices_array.shape[0]
+    n_faces = faces_array.shape[0]
+
+    for name, vectors in vector_fields.items():
+        vectors = np.asarray(vectors)
+
+        if vectors.shape != vertices_array.shape:
+            raise ValueError(
+                f"Vector field {name!r} must have shape "
+                f"{vertices_array.shape}, but received {vectors.shape}."
+            )
+
+    for name, scalars in scalar_fields.items():
+        scalars = np.asarray(scalars).reshape(-1)
+
+        if scalars.shape != (n_vertices,):
+            raise ValueError(
+                f"Scalar field {name!r} must have shape "
+                f"({n_vertices},), but received {scalars.shape}."
+            )
+
+    with filename.open("w", encoding="utf-8") as vtk_file:
+        vtk_file.write("# vtk DataFile Version 3.0\n")
+        vtk_file.write("PINN surface mesh\n")
+        vtk_file.write("ASCII\n")
+        vtk_file.write("DATASET POLYDATA\n")
+
+        vtk_file.write(
+            f"POINTS {n_vertices} float\n"
+        )
+        for x, y, z in vertices_array:
+            vtk_file.write(
+                f"{x:.9g} {y:.9g} {z:.9g}\n"
+            )
+
+        vtk_file.write(
+            f"POLYGONS {n_faces} {4 * n_faces}\n"
+        )
+        for first, second, third in faces_array:
+            vtk_file.write(
+                f"3 {int(first)} {int(second)} {int(third)}\n"
+            )
+
+        if vector_fields or scalar_fields:
+            vtk_file.write(
+                f"\nPOINT_DATA {n_vertices}\n"
+            )
+
+        for name, vectors in vector_fields.items():
+            vectors = np.asarray(
+                vectors,
+                dtype=np.float64,
+            )
+
+            vtk_file.write(
+                f"VECTORS {name} float\n"
+            )
+            for x, y, z in vectors:
+                vtk_file.write(
+                    f"{x:.9g} {y:.9g} {z:.9g}\n"
+                )
+
+            vtk_file.write("\n")
+
+        for name, scalars in scalar_fields.items():
+            scalars = np.asarray(
+                scalars,
+                dtype=np.float64,
+            ).reshape(-1)
+
+            vtk_file.write(
+                f"SCALARS {name} float 1\n"
+            )
+            vtk_file.write(
+                "LOOKUP_TABLE default\n"
+            )
+
+            for value in scalars:
+                vtk_file.write(f"{value:.9g}\n")
+
+            vtk_file.write("\n")
+
+
+def load_mesh_npz(
+    npz_path: str | Path,
+    keys: Sequence[str] = (
+        "verts",
+        "faces",
+        "norms",
+        "theta",
+        "curvs",
+        "gauss",
+        "force",
+    ),
+) -> tuple[np.ndarray, ...]:
+    """Load selected mesh arrays from a NumPy archive."""
+    with np.load(npz_path, allow_pickle=True) as archive:
+        missing_keys = [
+            key for key in keys
+            if key not in archive.files
+        ]
+
+        if missing_keys:
+            raise KeyError(
+                "Mesh archive is missing keys: "
+                + ", ".join(missing_keys)
+            )
+
+        return tuple(
+            np.asarray(archive[key])
+            for key in keys
+        )
+
+
+# ---------------------------------------------------------------------
+# Nearest-neighbor comparison
+# ---------------------------------------------------------------------
+
+
+def match_nearest_neighbor(
+    vertices_a: Any,
+    values_a: Any,
+    vertices_b: Any,
+    values_b: Any,
+    *,
+    max_dist: float | None = None,
+    mutual: bool = False,
+    workers: int = -1,
+) -> dict[str, Any]:
+    """Match values from dataset A to nearest vertices in dataset B."""
+    vertices_a = np.asarray(
+        vertices_a,
+        dtype=float,
+    )
+    vertices_b = np.asarray(
+        vertices_b,
+        dtype=float,
+    )
+    values_a = np.asarray(
+        values_a,
+        dtype=float,
+    ).reshape(-1)
+    values_b = np.asarray(
+        values_b,
+        dtype=float,
+    ).reshape(-1)
+
+    if vertices_a.ndim != 2 or vertices_a.shape[1] != 3:
+        raise ValueError(
+            "vertices_a must have shape (N, 3), "
+            f"but received {vertices_a.shape}."
+        )
+
+    if vertices_b.ndim != 2 or vertices_b.shape[1] != 3:
+        raise ValueError(
+            "vertices_b must have shape (M, 3), "
+            f"but received {vertices_b.shape}."
+        )
+
+    if values_a.shape[0] != vertices_a.shape[0]:
+        raise ValueError(
+            "values_a and vertices_a must contain the same "
+            "number of entries."
+        )
+
+    if values_b.shape[0] != vertices_b.shape[0]:
+        raise ValueError(
+            "values_b and vertices_b must contain the same "
+            "number of entries."
+        )
+
+    tree_b = cKDTree(vertices_b)
+    distances, indices_b = tree_b.query(
+        vertices_a,
+        k=1,
+        workers=workers,
+    )
+
+    mask = np.ones(
+        vertices_a.shape[0],
+        dtype=bool,
+    )
+
+    if max_dist is not None:
+        mask &= distances <= float(max_dist)
+
+    if mutual:
+        tree_a = cKDTree(vertices_a)
+        _, indices_a = tree_a.query(
+            vertices_b,
+            k=1,
+            workers=workers,
+        )
+
+        mask &= (
+            indices_a[indices_b]
+            == np.arange(vertices_a.shape[0])
+        )
+
+    values_a_kept = values_a[mask]
+    values_b_kept = values_b[indices_b[mask]]
+
+    if values_a_kept.shape[0] < 2:
+        raise RuntimeError(
+            "Too few matched points remained after filtering."
+        )
+
+    correlation = float(
+        np.corrcoef(
+            values_a_kept,
+            values_b_kept,
+        )[0, 1]
+    )
+
+    return {
+        "indices_b": indices_b,
+        "distances": distances,
+        "mask": mask,
+        "values_a": values_a_kept,
+        "values_b": values_b_kept,
+        "correlation": correlation,
+    }
+
+
+def match_nearest_and_plot(
+    vertices_a: Any,
+    values_a: Any,
+    vertices_b: Any,
+    values_b: Any,
+    *,
+    max_dist: float | None = None,
+    mutual: bool = False,
+    ax: Any | None = None,
+    title: str = "A vs B (nearest-neighbor matched)",
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    aspect: str = "auto",
+) -> dict[str, Any]:
+    """Match one dataset to another and create a correlation plot."""
+    result = match_nearest_neighbor(
+        vertices_a,
+        values_a,
+        vertices_b,
+        values_b,
+        max_dist=max_dist,
+        mutual=mutual,
+    )
+
+    if ax is None:
+        _, ax = plt.subplots(
+            figsize=(4.2, 4.2)
+        )
+
+    matched_a = result["values_a"]
+    matched_b = result["values_b"]
+    correlation = result["correlation"]
+
+    ax.scatter(
+        matched_a,
+        matched_b,
+        s=8,
+        alpha=0.6,
+    )
+
+    lower = float(
+        np.nanmin(
+            np.concatenate([matched_a, matched_b])
+        )
+    )
+    upper = float(
+        np.nanmax(
+            np.concatenate([matched_a, matched_b])
+        )
+    )
+
+    ax.plot(
+        [lower, upper],
+        [lower, upper],
+        linestyle="--",
+        color="black",
+        linewidth=1.5,
+        zorder=3,
+    )
+
+    ax.set_xlabel("A values")
+    ax.set_ylabel("B values (nearest-neighbor matched)")
+    ax.set_title(
+        f"{title}\n"
+        f"Pearson r = {correlation:.3f} "
+        f"(n={matched_a.shape[0]})"
+    )
+
+    ax.set_xlim(
+        *(xlim if xlim is not None else (lower, upper))
+    )
+    ax.set_ylim(
+        *(ylim if ylim is not None else (lower, upper))
+    )
+    ax.set_aspect(aspect)
+
+    return result
+
+
+def match_and_plot_multi_data(
+    vertices_a: Any,
+    values_a: Any,
+    datasets_b: Sequence[tuple[Any, Any]],
+    *,
+    max_dist: float | None = None,
+    mutual: bool = False,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    aspect: str = "auto",
+    box_aspect: float | None = None,
+    labels: Sequence[str] | None = None,
+    colors: Sequence[Any] | None = None,
+    title: str | None = None,
+    xlabel: str = "A values",
+    ylabel: str = "B values (nearest-neighbor matched)",
+    ax: Any | None = None,
+    figsize: tuple[float, float] = (4.5, 4.5),
+    marker_size: float = 2.0,
+    alpha: float = 1.0,
+) -> tuple[Any, dict[str, dict[str, Any]]]:
+    """Match dataset A against multiple datasets and plot the comparisons."""
+    n_datasets = len(datasets_b)
+
+    if n_datasets == 0:
+        raise ValueError(
+            "datasets_b must contain at least one dataset."
+        )
+
+    if labels is None:
+        labels = [
+            f"B{index + 1}"
+            for index in range(n_datasets)
+        ]
+
+    if colors is None:
+        colors = [None] * n_datasets
+
+    if len(labels) != n_datasets:
+        raise ValueError(
+            "labels must have the same length as datasets_b."
+        )
+
+    if len(colors) != n_datasets:
+        raise ValueError(
+            "colors must have the same length as datasets_b."
+        )
+
+    if ax is None:
+        figure, ax = plt.subplots(
+            figsize=figsize
+        )
+    else:
+        figure = ax.figure
+
+    results = {}
+    plotted_values = []
+
+    for (
+        vertices_b,
+        values_b,
+    ), label, color in zip(
+        datasets_b,
+        labels,
+        colors,
+    ):
+        result = match_nearest_neighbor(
+            vertices_a,
+            values_a,
+            vertices_b,
+            values_b,
+            max_dist=max_dist,
+            mutual=mutual,
+        )
+        results[label] = result
+
+        matched_a = result["values_a"]
+        matched_b = result["values_b"]
+
+        ax.scatter(
+            matched_a,
+            matched_b,
+            s=marker_size,
+            alpha=alpha,
+            color=color,
+            label=(
+                f"{label} "
+                f"(r={result['correlation']:.3f})"
+            ),
+            zorder=2,
+            edgecolors="none",
+            rasterized=True,
+        )
+
+        plotted_values.extend(
+            [matched_a, matched_b]
+        )
+
+    combined_values = np.concatenate(
+        plotted_values
+    )
+    lower = float(np.nanmin(combined_values))
+    upper = float(np.nanmax(combined_values))
+
+    ax.plot(
+        [lower, upper],
+        [lower, upper],
+        linestyle="--",
+        color="black",
+    )
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    if title is not None:
+        ax.set_title(title)
+
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+    ax.set_aspect(aspect)
+
+    if box_aspect is not None:
+        ax.set_box_aspect(box_aspect)
+
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.45, -0.26),
+        frameon=False,
+        ncol=1,
+        handletextpad=-0.5,
+        columnspacing=0.0,
+        labelspacing=0.0,
+    )
+
+    return figure, results
+
 

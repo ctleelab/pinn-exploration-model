@@ -1,77 +1,170 @@
-# pinn-exploration-model
+# PINN: Physics-Informed Neural Networks for Membrane Reconstruction and Curvature Estimation
 
-## Physics-Guided Membrane Segmentation from Cryo-ET Data
+PINN is a physics-informed framework for reconstructing smooth membrane geometries from volumetric cryo-electron tomography (cryo-ET) data. Instead of representing membranes as discrete voxels or meshes, the framework learns a continuous **implicit neural representation (INR)** of the membrane surface, enabling direct computation of differential geometric quantities such as surface normals, mean curvature, and Gaussian curvature.
 
-This repository provides tools for:
-- Generating **pseudo cryo-ET data** from **Mem3DG-generated membrane meshes**.
-- Implementing **physics-informed neural networks (PINNs)** for membrane segmentation.
+To improve geometric accuracy under noisy and incomplete imaging conditions, membrane mechanics are incorporated into the optimization through a **physics-informed neural network (PINN)** framework. The resulting membrane reconstruction is consistent with both the observed image data and the underlying membrane physics, providing an accurate representation for quantitative membrane analysis.
 
-## 📂 Repository Structure
-```
-membrane_segmentation/
-│── data/                          # Data directory
-│   ├── raw/                        # Raw Mem3DG input files
-│   ├── synthetic/                  # Generated pseudo cryo-ET data
-│   ├── processed/                  # Preprocessed data for training
-│
-│── src/                           # Source code
-│   ├── data_generation/            # Code for synthetic data generation
-│   │   ├── mesh_to_cryoet.py       # Converts Mem3DG meshes into pseudo cryo-ET
-│   ├── pinn/                       # PINN model for membrane segmentation
-│
-│── notebooks/                     # Jupyter notebooks for experiments
-│   ├── data_generation_demo.ipynb  # Walkthrough of synthetic data generation
-│   ├── pinn_demo.ipynb             # Walkthrough of PINN-based segmentation
-│
-│── outputs/                       # General outputs from executions
-│   ├── figs/                       # Figures/plots from experiments
-│   ├── logs/                       # Logs and metrics
-│   ├── models/                     # Saved models/checkpoints
-│   ├── predictions/                # Final predictions/results
-│
-│── requirements.txt                # Dependencies for pip installation
-│── README.md                       # Project documentation
-│── LICENSE                         # MIT License file
-│── .gitignore                      # Files ignored by Git
-```
+<p align="center">
+  <img src="asset/overview_pinn.png" width="900">
+</p>
 
-## 🚀 Installation
+---
 
-### 1️⃣ Clone the Repository
-```sh
-git clone https://github.com/your-username/membrane_segmentation.git
-cd membrane_segmentation
-```
+## Features
 
-### 2️⃣ Set Up the Virtual Environment
-```sh
-python3 -m venv venv
-source venv/bin/activate  # Mac/Linux
-venv\Scripts\activate      # Windows
+* Continuous implicit neural representation (INR) of membrane geometry
+* Physics-informed optimization using membrane mechanics
+* Direct estimation of surface normals, mean curvature, and Gaussian curvature
+* JAX/Flax implementation with automatic differentiation
+* Example dataset and complete analysis workflow
+
+---
+
+## Repository Structure
+
+```text
+.
+├── asset/                  Figures used in the documentation
+├── example/
+│   ├── data/               Example input data
+│   └── output/             Example reconstruction results
+├── notebooks/
+│   ├── 1-signal-extraction.ipynb
+│   ├── 2-phase-field-optimization.ipynb
+│   └── 3-curvature-analysis.ipynb
+├── src/
+│   └── pinn/
+│       ├── analysis.py
+│       ├── model.py
+│       ├── plot.py
+│       ├── preprocess.py
+│       ├── run.py
+│       ├── train.py
+│       └── utils.py
+├── requirements.txt
+├── LICENSE
+└── README.md
 ```
 
-### 3️⃣ Install Dependencies
-```sh
+---
+
+## Installation
+
+Clone the repository
+
+```bash
+git clone https://github.com/<your-username>/<repository-name>.git
+cd <repository-name>
+```
+
+Create a Python environment
+
+```bash
+conda create -n pinn python=3.12
+conda activate pinn
+```
+
+Install the required packages
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Alternative Installation using pixi
+---
 
-[Pixi](https://pixi.sh/) is a package management tool that helps to harmonize conda and pypi dependencies.
-It also provides benefits such as preconfigured tasks and pipelining.
+## Quick Start
 
-Instructions for installing pixi can be found here: https://pixi.sh/latest/installation/
+The example workflow is organized into three Jupyter notebooks and should be executed in the following order.
 
-Once pixi is installed you can simply run `pixi run biconcave`.
-It should automatically set up a local conda environment and execute the biconcave "task". 
-The tasks, dependency specificiations, and other configurations can be found in `pixi.toml`. 
-Notably, changes to this file can be done by hand or by the pixi cli tool.
-The `pixi.lock` file is a human readable list of solved dependency versions.
-Changes to the lockfile are handled by pixi and reflect changes to the environment.
+### 1. Signal extraction
 
-## 📜 License
-This project is licensed under the **MIT License**.
+```text
+notebooks/1-signal-extraction.ipynb
+```
 
-## 📬 Contact
-If you have questions, feel free to reach out via:
-- **Email:** atsumat@uw.edu
+This notebook extracts membrane signal points from the input volumetric image and prepares the training data.
+
+### 2. Physics-informed phase-field optimization
+
+```text
+notebooks/2-phase-field-optimization.ipynb
+```
+
+This notebook reconstructs the membrane as a continuous implicit phase field using the physics-informed neural network.
+
+### 3. Curvature analysis
+
+```text
+notebooks/3-curvature-analysis.ipynb
+```
+
+This notebook extracts the membrane surface and computes geometric quantities including
+
+* Surface normal
+* Mean curvature
+* Gaussian curvature
+
+---
+
+## Example Data
+
+Example data and reconstruction results are provided under
+
+```text
+example/
+```
+
+to demonstrate the complete workflow without requiring external datasets.
+
+---
+
+## Method
+
+The overall workflow consists of three stages: signal extraction, physics-informed membrane reconstruction, and curvature analysis.
+
+<p align="center">
+  <img src="asset/flowchart.png" width="900">
+</p>
+
+Starting from a volumetric cryo-ET image, the pipeline first extracts membrane signal points to generate training data. A physics-informed neural network is then optimized to reconstruct a continuous membrane phase field, from which the membrane surface and its differential geometric quantities—including surface normals, mean curvature, and Gaussian curvature—are computed.
+
+The membrane geometry is represented as a continuous implicit neural representation, allowing geometric quantities to be computed directly through automatic differentiation. A physics-based regularization derived from membrane mechanics is incorporated during optimization to produce geometrically smooth and physically plausible reconstructions.
+
+---
+
+## Dependencies
+
+The implementation is based on
+
+* JAX
+* Flax
+* Optax
+* NumPy
+* SciPy
+* Matplotlib
+
+See `requirements.txt` for the complete list of dependencies.
+
+---
+
+## Citation
+
+If you use this repository in your research, please cite
+
+```bibtex
+@article{YOUR_PAPER,
+  title   = {Physics-Informed Neural Networks for Membrane Reconstruction and Curvature Estimation},
+  author  = {...},
+  journal = {...},
+  year    = {...}
+}
+```
+
+---
+
+## License
+
+This project is released under the MIT License. See the `LICENSE` file for details.
+
+
+

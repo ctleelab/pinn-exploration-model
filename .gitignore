@@ -1,6 +1,3 @@
-# Ignore virtual environment
-venv/
-
 # Ignore Jupyter notebook checkpoints
 .ipynb_checkpoints/
 
@@ -14,18 +11,8 @@ __pycache__/
 Thumbs.db
 
 # Ignore log files and temporary files
-logs/
 *.log
-tutorial/output/
 
-# Ignore large data files (optional)
+# Ignore large data files
 data/
-data/raw/
-data/synthetic/
-
 outputs/
-
-# pixi environments
-*.egg-info
-.pixi/*
-!.pixi/config.toml

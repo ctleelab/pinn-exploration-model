@@ -1,76 +1,98 @@
+from typing import Any, Mapping, Optional
+
 import jax
 import jax.numpy as jnp
-import optax
 from jax import jit
-from flax.training import train_state
-from pinn.model import PINN, loss_data, loss_phys, loss_sign, total_loss
 import numpy as np
-from typing import NamedTuple
-from functools import partial
+import optax
+from flax.training import train_state
 
-# Define TrainState for managing training parameters and optimizer
+from pinn.model import PINN, loss_curv, loss_data, loss_phys, loss_sign
+
+
+
 class TrainState(train_state.TrainState):
-    lambda_1: float  # Weight for loss_data
-    lambda_2: float  # Weight for loss_physics
-    lambda_3: float  # Weight for loss_sign
-    learning_rate: float
-    warmup_steps: float  # Warmup steps for lambda_2
+    """Training state containing model parameters and loss weights."""
+
+    lambda_data: float
+    lambda_phys: float
+    lambda_sign: float
+    lambda_curv: float
+
 
 def create_train_state(
-    key, 
-    lambda_1=100000,
-    lambda_2=10,
-    lambda_3=100000,
-    learning_rate=1e-3,
-    warmup_steps=10000,
-    sdf_pretrain=None,
-    init_ckpt=None,
-    radius=None):
+    key: jax.Array,
+    lambda_data: float = 100_000.0,
+    lambda_phys: float = 10.0,
+    lambda_sign: float = 100_000.0,
+    lambda_curv: float = 0.0,
+    learning_rate: float = 1e-3,
+    sdf_pretrain: str | None = None,
+    radius: float | None = None,
+    init_checkpoint: Mapping[str, Any] | None = None,
+) -> tuple[TrainState, PINN]:
+    """Create the PINN, initialize its parameters, and configure the optimizer.
 
-    """Initializes the model, parameters, optimizer, and loss weights inside TrainState."""
-    model = PINN()  # Create model instance
-    params = model.init(key, jnp.ones((1, 3)))  # Initialize model parameters
+    Parameters
+    ----------
+    key
+        JAX random key used to initialize the model parameters.
+    lambda_data
+        Weight applied to the data loss.
+    lambda_phys
+        Weight applied to the physics loss.
+    lambda_sign
+        Weight applied to the sign loss.
+    lambda_curv
+        Weight applied to the curvature loss.
+    learning_rate
+        Adam optimizer learning rate.
+    init_checkpoint
+        Optional checkpoint used to initialize the model parameters. The
+        checkpoint is expected to contain ``checkpoint["state"]["params"]``.
 
-    optimizer = optax.adam(learning_rate)  # Adam optimizer
+    Returns
+    -------
+    state
+        Initialized training state.
+    model
+        PINN model instance.
+    """
+    model = PINN()
+    params = model.init(key, jnp.ones((1, 3)))
 
-    # Perform SDF pretraining before training
     if sdf_pretrain is not None:
-        print("Pretraining the network using SDF...")
+        print(f"Pretraining the network using '{sdf_pretrain}' initialization...")
         grid_points, sdf_initial = generate_sdf(kind=sdf_pretrain, radius=radius)
-
-        # Select random training points
         train_idx = np.random.choice(grid_points.shape[0], 10000, replace=False)
         x_train = grid_points[train_idx]
         y_train = sdf_initial.ravel()[train_idx]
 
         params = initialize_network_with_sdf(model, params, y_train, x_train)
 
-    # Use pretrained network structure as initial condition
-    if init_ckpt is not None:
-        print("Use pretrained data as initial condition...")
-        # params = init_ckpt["params"]
-        params = init_ckpt['state']['params']
+    if init_checkpoint is not None:
+        print("Initializing model parameters from checkpoint.")
+        params = init_checkpoint["state"]["params"]
 
+    optimizer = optax.adam(learning_rate)
 
-    return TrainState(
-        step=0,
+    state = TrainState.create(
         apply_fn=model.apply,
         params=params,
         tx=optimizer,
-        opt_state=optimizer.init(params),
-        lambda_1=lambda_1,
-        lambda_2=lambda_2,
-        lambda_3=lambda_3,
-        learning_rate=learning_rate,
-        warmup_steps=warmup_steps,
-    ), model
+        lambda_data=lambda_data,
+        lambda_phys=lambda_phys,
+        lambda_sign=lambda_sign,
+        lambda_curv=lambda_curv,
+    )
+    return state, model
 
 
 def generate_sdf(
     grid_size=64,
-    kind="plane",                   # "sphere" or "plane" or "multi" or "uniform"
-    radius=None,                     # used for sphere
-    epsilon=0.05,                   # smoothing width for tanh
+    kind="plane",  # "sphere" or "plane" or "multi" or "uniform"
+    radius=None,   # used for sphere
+    epsilon=0.05, 
 ):
     if radius is None:
         radius = 0.5
@@ -134,98 +156,108 @@ def initialize_network_with_sdf(model, params, sdf_values, grid_points, learning
         params, opt_state, loss_val = train_step(params, opt_state)
 
         if step % 20 == 0:
-            # print(f"Pre-training Step {step}, Loss: {loss_val:.6f}")
             predictions = model.apply(params, grid_points)
-            # print(f"Pre-training Step {step}, Loss: {loss_val:.6f}, "
-              # f"Pred min: {predictions.min():.6f}, Pred max: {predictions.max():.6f}")
 
     return params
 
-# # Training step function
-# @jit
-# def train_step(state, data_edge, data_sign, data_phys):
-#     """ Performs one training step, computing gradients and updating parameters. """
-
-#     def compute_losses(params):
-#         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-#         loss_data_val = loss_data(phi_fn, data_edge)
-#         loss_phys_val = loss_phys(phi_fn, data_phys)
-#         loss_sign_val = loss_sign(phi_fn, data_sign)
-#         total_loss_val = state.lambda_1 * loss_data_val + state.lambda_2 * loss_phys_val + state.lambda_3 * loss_sign_val
-#         return total_loss_val, (loss_data_val, loss_phys_val, loss_sign_val)
-
-#     (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
-
-#     new_state = state.apply_gradients(grads=grads)  # Update parameters using gradients
-#     loss_data_val, loss_phys_val, loss_sign_val = aux_losses
-
-#     return new_state, loss, loss_data_val, loss_phys_val, loss_sign_val
 
 
+def compute_initial_losses(
+    state: TrainState,
+    data_edge: Mapping[str, jax.Array],
+    data_sign: Mapping[str, jax.Array],
+    data_phys: Mapping[str, jax.Array],
+    data_curv: Mapping[str, jax.Array],
+) -> dict[str, np.ndarray]:
+    """Compute and format the losses before training begins."""
 
-def linear_schedule(step, max_value, warmup_steps):
+    def phi_fn(points: jax.Array) -> jax.Array:
+        return state.apply_fn(
+            state.params,
+            points.reshape(-1, 3),
+        )
+
+    data_loss = loss_data(phi_fn, data_edge)
+    phys_loss = loss_phys(phi_fn, data_phys)
+    sign_loss = loss_sign(phi_fn, data_sign)
+    curv_loss = loss_curv(phi_fn, data_curv)
+
+    total_loss = (
+        state.lambda_data * data_loss
+        + state.lambda_phys * phys_loss
+        + state.lambda_sign * sign_loss
+        + state.lambda_curv * curv_loss
+    )
+
+    return {
+        "step": np.asarray([0], dtype=np.int64),
+        "total_loss": np.asarray([total_loss], dtype=np.float32),
+        "data_loss": np.asarray([data_loss], dtype=np.float32),
+        "phys_loss": np.asarray([phys_loss], dtype=np.float32),
+        "sign_loss": np.asarray([sign_loss], dtype=np.float32),
+        "curv_loss": np.asarray([curv_loss], dtype=np.float32),
+    }
+
+
+def make_train_step(use_curvature_loss: bool = False):
+    """Create a JIT-compiled PINN training step.
+
+    Parameters
+    ----------
+    use_curvature_loss
+        Whether to evaluate and include the curvature loss. Disabling this
+        avoids computing the expensive higher-order derivatives required by
+        the curvature term.
     """
-    Linearly increases from 0 → max_value over warmup_steps.
-    """
-    frac = jnp.clip(step / warmup_steps, 0.0, 1.0)
-    return max_value * frac
 
+    def train_step(
+        state: TrainState,
+        data_edge: Mapping[str, jax.Array],
+        data_sign: Mapping[str, jax.Array],
+        data_phys: Mapping[str, jax.Array],
+        data_curv: Mapping[str, jax.Array],
+    ):
+        def compute_losses(params):
+            def phi_fn(points):
+                return state.apply_fn(
+                    params,
+                    points.reshape(-1, 3),
+                )
 
-# @partial(jax.jit, static_argnames=("schedule",))
-# def train_step(state, step, data_edge, data_sign, data_phys, schedule=False):
+            data_loss = loss_data(phi_fn, data_edge)
+            phys_loss = loss_phys(phi_fn, data_phys)
+            sign_loss = loss_sign(phi_fn, data_sign)
 
-#     if schedule:
-#         lambda_2_step = linear_schedule(
-#             step,
-#             max_value=state.lambda_2,
-#             warmup_steps=state.warmup_steps
-#         )
-#     else:
-#         lambda_2_step = state.lambda_2
+            if use_curvature_loss:
+                curv_loss = loss_curv(phi_fn, data_curv)
+            else:
+                curv_loss = jnp.zeros((), dtype=data_loss.dtype)
 
+            total_loss = (
+                state.lambda_data * data_loss
+                + state.lambda_phys * phys_loss
+                + state.lambda_sign * sign_loss
+                + state.lambda_curv * curv_loss
+            )
 
-#     def compute_losses(params):
-#         phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
+            losses = {
+                "total_loss": total_loss,
+                "data_loss": data_loss,
+                "phys_loss": phys_loss,
+                "sign_loss": sign_loss,
+                "curv_loss": curv_loss,
+            }
 
-#         loss_data_val = loss_data(phi_fn, data_edge)
-#         loss_phys_val = loss_phys(phi_fn, data_phys)
-#         loss_sign_val = loss_sign(phi_fn, data_sign)
+            return total_loss, losses
 
-#         total_loss_val = (
-#             state.lambda_1   * loss_data_val
-#             + lambda_2_step  * loss_phys_val
-#             + state.lambda_3 * loss_sign_val
-#         )
-#         return total_loss_val, (loss_data_val, loss_phys_val, loss_sign_val)
+        (_, losses), gradients = jax.value_and_grad(
+            compute_losses,
+            has_aux=True,
+        )(state.params)
 
-#     (loss, aux_losses), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
+        new_state = state.apply_gradients(grads=gradients)
 
-#     new_state = state.apply_gradients(grads=grads)
-#     loss_data_val, loss_phys_val, loss_sign_val = aux_losses
+        return new_state, losses
 
-#     return new_state, loss, loss_data_val, loss_phys_val, loss_sign_val
-
-@jax.jit
-def train_step_sched(state, step, data_edge, data_sign, data_phys):
-    lambda_2_step = linear_schedule(step, max_value=state.lambda_2, warmup_steps=state.warmup_steps)
-    return _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step)
-
-@jax.jit
-def train_step_nosched(state, step, data_edge, data_sign, data_phys):
-    lambda_2_step = state.lambda_2
-    return _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step)
-
-def _train_step_core(state, step, data_edge, data_sign, data_phys, lambda_2_step):
-    def compute_losses(params):
-        phi_fn = lambda x: state.apply_fn(params, x.reshape(-1, 3))
-        ld = loss_data(phi_fn, data_edge)
-        lp = loss_phys(phi_fn, data_phys)
-        ls = loss_sign(phi_fn, data_sign)
-        total = state.lambda_1 * ld + lambda_2_step * lp + state.lambda_3 * ls
-        return total, (ld, lp, ls)
-
-    (loss, (ld, lp, ls)), grads = jax.value_and_grad(compute_losses, has_aux=True)(state.params)
-    new_state = state.apply_gradients(grads=grads)
-    return new_state, loss, ld, lp, ls
-
+    return jax.jit(train_step, donate_argnums=(0,))
 

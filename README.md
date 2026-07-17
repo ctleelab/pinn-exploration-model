@@ -52,8 +52,8 @@ To improve geometric accuracy under noisy and incomplete imaging conditions, mem
 Clone the repository
 
 ```bash
-git clone https://github.com/<your-username>/<repository-name>.git
-cd <repository-name>
+git clone https://github.com/ctleelab/pinn-exploration-model.git
+cd pinn-exploration-model
 ```
 
 Create a Python environment
@@ -81,7 +81,7 @@ The example workflow is organized into three Jupyter notebooks and should be exe
 notebooks/1-signal-extraction.ipynb
 ```
 
-This notebook extracts membrane signal points from the input volumetric image and prepares the training data.
+This notebook extracts membrane signal points from the input volumetric image.
 
 ### 2. Physics-informed phase-field optimization
 
@@ -89,7 +89,7 @@ This notebook extracts membrane signal points from the input volumetric image an
 notebooks/2-phase-field-optimization.ipynb
 ```
 
-This notebook reconstructs the membrane as a continuous implicit phase field using the physics-informed neural network.
+This notebook reconstructs the membrane as a continuous implicit phase field using the extracted signal points and physics-based constraints.
 
 ### 3. Curvature analysis
 
@@ -97,15 +97,10 @@ This notebook reconstructs the membrane as a continuous implicit phase field usi
 notebooks/3-curvature-analysis.ipynb
 ```
 
-This notebook extracts the membrane surface and computes geometric quantities including
+This notebook extracts the membrane surface from the reconstructed phase field and computes geometric quantities, including the surface normal, mean curvature, and Gaussian curvature.
 
-* Surface normal
-* Mean curvature
-* Gaussian curvature
 
----
-
-## Example Data
+### Example Data
 
 Example data and reconstruction results are provided under
 
@@ -113,7 +108,9 @@ Example data and reconstruction results are provided under
 example/
 ```
 
-to demonstrate the complete workflow without requiring external datasets.
+to demonstrate the complete workflow. 
+
+The example dataset consists of an endocytic pit extracted from a focused ion beam scanning electron microscopy (FIB-SEM) volume of an interphase COS-7 cell. The original dataset is available through the OpenOrganelle portal provided by HHMI Janelia Research Campus (Dataset ID: `jrc_cos7-1b`).
 
 ---
 

@@ -1,6 +1,6 @@
 # PINN: Physics-Informed Neural Networks for Membrane Reconstruction and Curvature Estimation
 
-PINN is a physics-informed framework for reconstructing smooth membrane geometries from volumetric cryo-electron tomography (cryo-ET) data. Instead of representing membranes as discrete voxels or meshes, the framework learns a continuous **implicit neural representation (INR)** of the membrane surface, enabling direct computation of differential geometric quantities such as surface normals, mean curvature, and Gaussian curvature.
+PINN is a physics-informed framework for reconstructing smooth membrane geometries from volumetric electron microscopy data. Instead of representing membranes as discrete voxels or meshes, the framework learns a continuous **implicit neural representation (INR)** of the membrane surface, enabling direct computation of differential geometric quantities such as surface normals, mean curvature, and Gaussian curvature.
 
 To improve geometric accuracy under noisy and incomplete imaging conditions, membrane mechanics are incorporated into the optimization through a **physics-informed neural network (PINN)** framework. The resulting membrane reconstruction is consistent with both the observed image data and the underlying membrane physics, providing an accurate representation for quantitative membrane analysis.
 
@@ -10,13 +10,13 @@ To improve geometric accuracy under noisy and incomplete imaging conditions, mem
 
 ---
 
-## Features
+## Highlights
 
 * Continuous implicit neural representation (INR) of membrane geometry
-* Physics-informed optimization using membrane mechanics
-* Direct estimation of surface normals, mean curvature, and Gaussian curvature
-* JAX/Flax implementation with automatic differentiation
-* Example dataset and complete analysis workflow
+* Physics-informed optimization using Helfrich-Canham-Evans membrane model
+* Direct computation of surface normals, mean curvature, and Gaussian curvature
+* End-to-end workflow from volumetric image data to quantitative membrane analysis
+* Example dataset and notebooks for reproducing the pipeline
 
 ---
 
@@ -24,26 +24,25 @@ To improve geometric accuracy under noisy and incomplete imaging conditions, mem
 
 ```text
 .
-├── asset/                  Figures used in the documentation
-├── example/
-│   ├── data/               Example input data
-│   └── output/             Example reconstruction results
-├── notebooks/
-│   ├── 1-signal-extraction.ipynb
-│   ├── 2-phase-field-optimization.ipynb
-│   └── 3-curvature-analysis.ipynb
-├── src/
-│   └── pinn/
-│       ├── analysis.py
-│       ├── model.py
-│       ├── plot.py
-│       ├── preprocess.py
-│       ├── run.py
-│       ├── train.py
-│       └── utils.py
-├── requirements.txt
-├── LICENSE
-└── README.md
+├── asset/                                   # Figures used in the documentation
+├── example/                                 # A minimal example demonstrating the workflow
+│   ├── data/                                # Example input data
+│   └── output/                              # Example reconstruction results
+├── notebooks/                               # Step-by-step Jupyter notebooks
+│   ├── 1-signal-extraction.ipynb            # Signal extraction from volumetric images
+│   ├── 2-phase-field-optimization.ipynb     # Physics-informed phase-field optimization
+│   └── 3-curvature-analysis.ipynb           # Surface extraction and curvature analysis
+├── src/pinn/                                # Source code of the PINN package
+│   ├── analysis.py                          # Analysis of reconstructed membrane geometry
+│   ├── model.py                             # Neural network architecture and loss functions
+│   ├── plot.py                              # Visualization utilities
+│   ├── preprocess.py                        # Data preprocessing and signal point extraction
+│   ├── run.py                               # High-level pipeline for PINN optimization
+│   ├── train.py                             # Training and optimization routines
+│   └── utils.py                             # Utility functions
+├── requirements.txt                         # Python package dependencies
+├── LICENSE                                  # License information
+└── README.md                                # Project overview and usage guide
 ```
 
 ---

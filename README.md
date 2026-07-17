@@ -120,13 +120,26 @@ to demonstrate the complete workflow without requiring external datasets.
 
 ## Method
 
-The overall workflow consists of three stages: signal extraction, physics-informed membrane reconstruction, and curvature analysis.
+The reconstruction pipeline consists of three main steps:
 
-<p align="center">
-  <img src="asset/flowchart.png" width="900">
-</p>
-
-Starting from a volumetric cryo-ET image, the pipeline first extracts membrane signal points to generate training data. A physics-informed neural network is then optimized to reconstruct a continuous membrane phase field, from which the membrane surface and its differential geometric quantities—including surface normals, mean curvature, and Gaussian curvature—are computed.
+```text
+Volumetric image
+        │
+        ▼
+Signal extraction
+        │
+        ▼
+Physics-informed membrane reconstruction
+        │
+        ▼
+Continuous phase field
+        │
+        ▼
+Surface extraction
+        │
+        ▼
+Curvature estimation
+```
 
 The membrane geometry is represented as a continuous implicit neural representation, allowing geometric quantities to be computed directly through automatic differentiation. A physics-based regularization derived from membrane mechanics is incorporated during optimization to produce geometrically smooth and physically plausible reconstructions.
 

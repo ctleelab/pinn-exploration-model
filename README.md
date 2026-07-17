@@ -12,11 +12,10 @@ To improve geometric accuracy under noisy and incomplete imaging conditions, mem
 
 ## Highlights
 
-* Continuous implicit neural representation (INR) of membrane geometry
-* Physics-informed optimization using Helfrich-Canham-Evans membrane model
-* Direct computation of surface normals, mean curvature, and Gaussian curvature
-* End-to-end workflow from volumetric image data to quantitative membrane analysis
-* Example dataset and notebooks for reproducing the pipeline
+* This program reconstructs membrane geometry from voxel-based tomographic data as an implicit neural representation (INR)
+* The INR represents the membrane surface as the zero level set of a phase field parameterized by a multilayer perceptron (MLP)
+* The continuous and differentiable nature of the INR enables direct computation of differential geometric quantities, such as surface normals and curvature, through automatic differentiation
+* The Helfrich–Canham–Evans membrane model is incorporated as a physics-based constraint to improve the reconstruction accuracy of higher-order geometric properties, particularly membrane curvature
 
 ---
 

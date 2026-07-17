@@ -71,7 +71,7 @@ pip install -r requirements.txt
 
 ---
 
-## Quick Start
+## Workflow
 
 The example workflow is organized into three Jupyter notebooks and should be executed in the following order.
 
@@ -111,38 +111,9 @@ The example dataset consists of an endocytic pit extracted from a focused ion be
 
 ---
 
-## Method
-
-The reconstruction pipeline consists of three main steps:
-
-```text
-Volumetric image
-        │
-        ▼
-Signal extraction
-        │
-        ▼
-Physics-informed membrane reconstruction
-        │
-        ▼
-Continuous phase field
-        │
-        ▼
-Surface extraction
-        │
-        ▼
-Curvature estimation
-```
-
-The membrane geometry is represented as a continuous implicit neural representation, allowing geometric quantities to be computed directly through automatic differentiation. A physics-based regularization derived from membrane mechanics is incorporated during optimization to produce geometrically smooth and physically plausible reconstructions.
-
----
-
 ## Dependencies
 
-The implementation is primarily based on the **JAX/Flax ecosystem** for differentiable programming and neural network optimization.
-
-Additional packages required to run the complete workflow are listed in `requirements.txt`.
+The implementation is primarily based on the **JAX/Flax ecosystem** for differentiable programming and neural network optimization. Additional packages required to run the complete workflow are listed in `requirements.txt`.
 
 ---
 

@@ -107,9 +107,6 @@ Example data and reconstruction results are provided under
 ```text
 example/
 ```
-
-to demonstrate the complete workflow. 
-
 The example dataset consists of an endocytic pit extracted from a focused ion beam scanning electron microscopy (FIB-SEM) volume of an interphase COS-7 cell. The original dataset is available through the OpenOrganelle portal provided by HHMI Janelia Research Campus (Dataset ID: `jrc_cos7-1b`).
 
 ---
@@ -143,26 +140,18 @@ The membrane geometry is represented as a continuous implicit neural representat
 
 ## Dependencies
 
-The implementation is based on
+The implementation is primarily based on the **JAX/Flax ecosystem** for differentiable programming and neural network optimization.
 
-* JAX
-* Flax
-* Optax
-* NumPy
-* SciPy
-* Matplotlib
-
-See `requirements.txt` for the complete list of dependencies.
+Additional packages required to run the complete workflow are listed in `requirements.txt`.
 
 ---
 
 ## Citation
 
-If you use this repository in your research, please cite
-
 ```bibtex
-@article{YOUR_PAPER,
-  title   = {Physics-Informed Neural Networks for Membrane Reconstruction and Curvature Estimation},
+@article{TODO,
+  title   = {Physics-Guided Neural Reconstruction of Cellular Membranes for 3D
+Microscopy},
   author  = {...},
   journal = {...},
   year    = {...}

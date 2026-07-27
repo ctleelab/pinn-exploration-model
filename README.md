@@ -116,7 +116,7 @@ The implementation is primarily based on the **JAX/Flax ecosystem** for differen
 
 ---
 
-## Citation
+<!-- ## Citation
 
 ```bibtex
 @article{TODO,
@@ -128,7 +128,7 @@ Microscopy},
 }
 ```
 
----
+--- -->
 
 ## License
 

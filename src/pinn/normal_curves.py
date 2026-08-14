@@ -1735,3 +1735,92 @@ def plot_ablation(
 
     plt.show()
 
+
+def plot_stage_bars(
+    data,
+    ylim=None,
+    figsize=(1.5, 1.5),
+):
+    """
+    Plot Stage 1, 2, and 3 values for each shape.
+
+    Expected data structure:
+    {
+        "biconcave": {0: value, 1: value, 2: value},
+        "bud_04":    {0: value, 1: value, 2: value},
+    }
+    """
+
+    shape_colors = {
+        "biconcave": "tab:red",
+        "bud_04": "tab:blue",
+    }
+
+    shape_labels = {
+        "biconcave": "Biconcave",
+        "bud_04": "Bud",
+    }
+
+    shape_order = ["biconcave", "bud_04"]
+    stage_order = [0, 1, 2]
+
+    values = []
+    colors = []
+    x_labels = []
+
+    for shape in shape_order:
+        for stage in stage_order:
+            values.append(float(data[shape][stage]))
+            colors.append(shape_colors[shape])
+            x_labels.append(f"Stage {stage + 1}")
+
+    # Add a small gap between the two shapes
+    x = np.array([0, 1, 2, 3, 4, 5])
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    ax.bar(
+        x,
+        values,
+        width=0.75,
+        color=colors,
+        edgecolor="none",
+        linewidth=0.8,
+    )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45, ha="right")
+    # ax.set_ylabel(ylabel)
+
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylim(0, 1.0)        
+
+    # Shape labels underneath each group
+    ax.text(
+        x[:3].mean(),
+        -0.35,
+        shape_labels["biconcave"],
+        ha="center",
+        va="top",
+        transform=ax.get_xaxis_transform(),
+        fontweight="bold",
+    )
+    ax.text(
+        x[3:].mean(),
+        -0.35,
+        shape_labels["bud_04"],
+        ha="center",
+        va="top",
+        transform=ax.get_xaxis_transform(),
+        fontweight="bold",
+    )
+
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.tick_params(direction="out")
+
+    fig.subplots_adjust(bottom=0.27)
+    plt.show()
+
+    return fig, ax

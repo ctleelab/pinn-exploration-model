@@ -35,6 +35,9 @@ phase = 2
 # We explicitly sweep through z
 axis = "z"
 
+z_srt = 40
+z_end = 81
+
 # Movie settings
 fps = 20
 dpi = 150
@@ -42,21 +45,22 @@ dpi = 150
 # Skip slices if desired.
 # 1 = every slice
 # 2 = every second slice
-slice_step = 1
+slice_step = 4
 
 # If True:
 #   z=0 -> z=max -> z=0
 # If False:
 #   z=0 -> z=max
 back_and_forth = True
+# back_and_forth = False
 
 # Phase-field evaluation
 batch = 4096
 run_on_cpu = False
 
 # Camera for the right panel
-elev = 20
-azim = -60
+elev = 0
+azim = 0
 
 # Surface appearance
 surface_alpha = 1.0
@@ -106,6 +110,7 @@ else:
 
 
 output_movie = f"../../outputs/movie/{shape}_three_panel_zscan.mp4"
+# output_movie = f"../../outputs/movie/test.mp4"
 
 
 # ============================================================
@@ -277,15 +282,109 @@ def read_legacy_vtk_polydata(filename):
 
     return vertices, faces
 
+def read_vtk_scalar(filename, scalar_name):
+    """
+    Read a POINT_DATA scalar field from legacy ASCII VTK.
+    """
+    with open(filename, "r") as f:
+        lines = f.readlines()
+
+    for i, line in enumerate(lines):
+        if line.startswith(f"SCALARS {scalar_name}"):
+
+            # Next line is LOOKUP_TABLE default
+            values = []
+            j = i + 2
+
+            while j < len(lines):
+                line = lines[j].strip()
+
+                # Stop at the next VTK data section
+                if (
+                    line.startswith("SCALARS")
+                    or line.startswith("VECTORS")
+                    or line.startswith("FIELD")
+                ):
+                    break
+
+                if line:
+                    values.extend(map(float, line.split()))
+
+                j += 1
+
+            return np.asarray(values)
+
+    raise ValueError(f"{scalar_name} not found in {filename}")
+
+def read_vtk_vectors(filename, vector_name):
+    with open(filename, "r") as f:
+        lines = f.readlines()
+
+    for i, line in enumerate(lines):
+        if line.startswith(f"VECTORS {vector_name}"):
+
+            values = []
+            j = i + 1
+
+            while j < len(lines):
+                line = lines[j].strip()
+
+                if (
+                    line.startswith("SCALARS")
+                    or line.startswith("VECTORS")
+                    or line.startswith("FIELD")
+                ):
+                    break
+
+                if line:
+                    values.extend(map(float, line.split()))
+
+                j += 1
+
+            return np.asarray(values).reshape(-1, 3)
+
+    raise ValueError(f"{vector_name} not found")
+
 
 print(f"Loading VTK mesh {vtk_path}")
 
-vertices, faces = read_legacy_vtk_polydata(
-    vtk_path
-)
+vertices, faces = read_legacy_vtk_polydata(vtk_path)
+# Undo axis swap from VTK generation
+vertices = vertices[:, [0, 2, 1]]
 
 print("Mesh vertices:", vertices.shape)
 print("Mesh triangles:", faces.shape)
+
+# curvature = read_vtk_scalar(vtk_path, "MeanCurvature")
+curvature = read_vtk_scalar(vtk_path, "GaussianCurvature")
+triangle_curvature = curvature[faces].mean(axis=1)
+
+triangle_vertices = vertices[faces]
+triangle_x = triangle_vertices[:, :, 0].mean(axis=1)
+sort_order = np.argsort(triangle_x)
+triangle_vertices_sorted = triangle_vertices[sort_order]
+triangle_x_sorted = triangle_x[sort_order]
+triangle_curvature_sorted = triangle_curvature[sort_order]
+
+from matplotlib.colors import Normalize
+import matplotlib.cm as cm
+
+curv_max = np.percentile(np.abs(triangle_curvature),80)
+curv_min = -curv_max
+# curv_max = -0.005
+# curv_min = 0.005
+curv_norm = Normalize(vmin=curv_min, vmax=curv_max)
+curv_cmap = cm.coolwarm
+
+vertex_normals = read_vtk_vectors(vtk_path,"Normal")
+triangle_normals = vertex_normals[faces].mean(axis=1)
+
+triangle_normals /= np.linalg.norm(
+    triangle_normals,
+    axis=1,
+    keepdims=True,
+) + 1e-12
+triangle_normals_sorted = triangle_normals[sort_order]
 
 
 # ============================================================
@@ -294,6 +393,26 @@ print("Mesh triangles:", faces.shape)
 
 mesh_xmin, mesh_ymin, mesh_zmin = vertices.min(axis=0)
 mesh_xmax, mesh_ymax, mesh_zmax = vertices.max(axis=0)
+
+# Zoom the right panel
+zoom = 0.8
+
+cx = 0.5 * (mesh_xmin + mesh_xmax)
+cy = 0.5 * (mesh_ymin + mesh_ymax)
+cz = 0.5 * (mesh_zmin + mesh_zmax)
+
+hx = 0.5 * (mesh_xmax - mesh_xmin) * zoom
+hy = 0.5 * (mesh_ymax - mesh_ymin) * zoom
+hz = 0.5 * (mesh_zmax - mesh_zmin) * zoom
+
+view_xmin, view_xmax = cx - hx, cx + hx
+view_ymin, view_ymax = cy - hy, cy + hy
+
+# Move object downward in the panel:
+# less margin below, more margin above
+z_shift = 0.1 * (mesh_zmax - mesh_zmin)
+view_zmin = cz - hz + z_shift
+view_zmax = cz + hz + z_shift
 
 print()
 print("Mesh bounds:")
@@ -306,22 +425,17 @@ print("z:", mesh_zmin, mesh_zmax)
 # TRUE TRIANGLE CLIPPING
 # ============================================================
 
-def interpolate_to_z_plane(p1, p2, z_cut):
-    """
-    Intersection of line segment p1--p2 with z=z_cut.
-    """
+def interpolate_to_x_plane(p1, p2, x_cut):
+    dx = p2[0] - p1[0]
 
-    dz = p2[2] - p1[2]
-
-    if abs(dz) < 1e-12:
+    if abs(dx) < 1e-12:
         return p1.copy()
 
-    t = (z_cut - p1[2]) / dz
-
+    t = (x_cut - p1[0]) / dx
     return p1 + t * (p2 - p1)
 
 
-def clip_polygon_below_z(polygon, z_cut):
+def clip_polygon_below_x(polygon, x_cut):
     """
     Clip one polygon against:
 
@@ -329,51 +443,31 @@ def clip_polygon_below_z(polygon, z_cut):
 
     using Sutherland-Hodgman polygon clipping.
     """
-
     output = []
-
     n = len(polygon)
 
     for i in range(n):
-
         current = polygon[i]
         previous = polygon[i - 1]
 
-        current_inside = current[2] <= z_cut
-        previous_inside = previous[2] <= z_cut
+        current_inside = current[0] <= x_cut
+        previous_inside = previous[0] <= x_cut
 
-        # entering
         if current_inside and not previous_inside:
-
-            intersection = interpolate_to_z_plane(
-                previous,
-                current,
-                z_cut,
+            intersection = interpolate_to_x_plane(
+                previous, current, x_cut
             )
-
             output.append(intersection)
             output.append(current)
 
-        # both inside
         elif current_inside and previous_inside:
-
             output.append(current)
 
-        # leaving
-        elif (
-            not current_inside
-            and previous_inside
-        ):
-
-            intersection = interpolate_to_z_plane(
-                previous,
-                current,
-                z_cut,
+        elif not current_inside and previous_inside:
+            intersection = interpolate_to_x_plane(
+                previous, current, x_cut
             )
-
             output.append(intersection)
-
-        # both outside -> nothing
 
     return output
 
@@ -381,7 +475,7 @@ def clip_polygon_below_z(polygon, z_cut):
 def clipped_mesh_triangles(
     vertices,
     faces,
-    z_cut,
+    x_cut,
 ):
     """
     Return renderable triangles representing the mesh
@@ -400,10 +494,10 @@ def clipped_mesh_triangles(
             vertices[face[2]],
         ]
 
-        polygon = clip_polygon_below_z(
+        polygon = clip_polygon_below_x(
             triangle,
-            z_cut,
-        )
+            x_cut,
+        )        
 
         if len(polygon) < 3:
             continue
@@ -478,7 +572,7 @@ def evaluate_all_phase_z_slices(
             phi_fn=phi_fn,
             grid_size=Nz,
             slice_index=k,
-            axis="z",
+            axis="x",
             batch=batch,
             expand_xy=expand_xy,
             run_on_cpu=run_on_cpu,
@@ -494,7 +588,8 @@ def evaluate_all_phase_z_slices(
         #
         # therefore transpose.
 
-        phase_volume[k] = phase_slice.T
+        # phase_volume[k] = phase_slice.T
+        phase_volume[k] = phase_slice
 
     print()
 
@@ -581,7 +676,7 @@ custom_gray = LinearSegmentedColormap.from_list(
 # MAP MRC SLICE INDEX -> PHYSICAL VTK Z
 # ============================================================
 
-def slice_index_to_mesh_z(k):
+def slice_index_to_mesh_x(k):
     """
     Linear mapping:
 
@@ -592,9 +687,8 @@ def slice_index_to_mesh_z(k):
     fraction = k / (Nz - 1)
 
     return (
-        mesh_zmin
-        + fraction
-        * (mesh_zmax - mesh_zmin)
+        mesh_xmin
+        + fraction * (mesh_xmax - mesh_xmin)
     )
 
 
@@ -603,14 +697,14 @@ def slice_index_to_mesh_z(k):
 # ============================================================
 
 fig = plt.figure(
-    figsize=(15, 5),
+    figsize=(12, 4),
     constrained_layout=True,
 )
 
 gs = fig.add_gridspec(
     1,
     3,
-    width_ratios=[1, 1, 1.2],
+    width_ratios=[1, 1, 1],
 )
 
 
@@ -627,22 +721,30 @@ ax_mesh = fig.add_subplot(
     projection="3d",
 )
 
+# pos = ax_mesh.get_position()
+# ax_mesh.set_position([
+#     pos.x0 - 0.01,   # shift left
+#     pos.y0,
+#     pos.width,
+#     pos.height,
+# ])
+
 
 # ============================================================
 # STATIC AXIS SETTINGS
 # ============================================================
 
-ax_mrc.set_title(
-    "Tomogram"
-)
+# ax_mrc.set_title(
+#     "Tomogram"
+# )
 
-ax_phase.set_title(
-    "Phase field"
-)
+# ax_phase.set_title(
+#     "Phase Field"
+# )
 
-ax_mesh.set_title(
-    "Reconstructed membrane"
-)
+# ax_mesh.set_title(
+#     "Membrane with Curvature"
+# )
 
 
 # Raw MRC
@@ -673,20 +775,9 @@ ax_phase.set_axis_off()
 # 3D CAMERA + LIMITS
 # ============================================================
 
-ax_mesh.set_xlim(
-    mesh_xmin,
-    mesh_xmax,
-)
-
-ax_mesh.set_ylim(
-    mesh_ymin,
-    mesh_ymax,
-)
-
-ax_mesh.set_zlim(
-    mesh_zmin,
-    mesh_zmax,
-)
+ax_mesh.set_xlim(view_xmin, view_xmax)
+ax_mesh.set_ylim(view_ymin, view_ymax)
+ax_mesh.set_zlim(view_zmin, view_zmax)
 
 ax_mesh.view_init(
     elev=elev,
@@ -703,6 +794,21 @@ ax_mesh.set_box_aspect(
 )
 
 ax_mesh.set_axis_off()
+
+
+light_dir = np.array([
+    -0.5,
+    -0.5,
+    1.0,
+])
+
+light_dir = light_dir / np.linalg.norm(light_dir)
+
+# ambient = 0.45
+# diffuse = 0.55
+
+ambient = 0.3
+diffuse = 0.7
 
 
 # ============================================================
@@ -761,12 +867,19 @@ with writer.saving(
             flush=True,
         )
 
+        fraction = k / (Nz - 1)
+
+        k_lm = int(round(
+            z_srt
+            + fraction * (z_end - z_srt)
+        ))
+
         # ------------------------------------------
         # LEFT: MRC
         # ------------------------------------------
 
         mrc_image.set_data(
-            cryoET_data[k]
+            cryoET_data[k_lm]
         )
 
         # ------------------------------------------
@@ -774,55 +887,74 @@ with writer.saving(
         # ------------------------------------------
 
         phase_image.set_data(
-            phase_volume[k]
+            phase_volume[k_lm]
         )
 
         # ------------------------------------------
         # RIGHT: progressive mesh
         # ------------------------------------------
 
-        z_cut = slice_index_to_mesh_z(k)
+        x_cut = slice_index_to_mesh_x(k)
 
-        clipped_triangles = clipped_mesh_triangles(
-            vertices=vertices,
-            faces=faces,
-            z_cut=z_cut,
+        # clipped_triangles = clipped_mesh_triangles(
+        #     vertices=vertices,
+        #     faces=faces,
+        #     x_cut=x_cut,
+        # )
+
+        n_visible = np.searchsorted(
+            triangle_x_sorted,
+            x_cut,
+            side="right",
         )
+        visible_triangles = triangle_vertices_sorted[:n_visible]
+        visible_curvature = (triangle_curvature_sorted[:n_visible])
+        facecolors = curv_cmap(curv_norm(visible_curvature))        
+
+        # Lighting
+        visible_normals = triangle_normals_sorted[:n_visible]
+        lighting = visible_normals @ light_dir
+        lighting = np.clip(lighting, 0.0, 1.0)   # Only illuminate surfaces facing the light
+        lighting = ambient + diffuse * lighting  # Ambient + diffuse lighting
+        facecolors[:, :3] *= lighting[:, None]
+        facecolors[:, :3] = np.clip(facecolors[:, :3], 0.0, 1.0)
 
         # Remove previous surface
         if surface_collection is not None:
             surface_collection.remove()
             surface_collection = None
 
-        if len(clipped_triangles) > 0:
+        # if len(clipped_triangles) > 0:
+        if len(visible_triangles) > 0:
+
+            # surface_collection = Poly3DCollection(
+            #     clipped_triangles,
+            #     alpha=surface_alpha,
+            # )
+
+            # surface_collection = Poly3DCollection(
+            #     visible_triangles,
+            #     facecolors=facecolors,
+            #     edgecolors="none",
+            #     alpha=surface_alpha,
+            # )
 
             surface_collection = Poly3DCollection(
-                clipped_triangles,
-                alpha=surface_alpha,
+                visible_triangles,
+                facecolors=facecolors,
+                edgecolors="none",
+                linewidths=0.0,
+                alpha=1.0,
             )
 
             # Let matplotlib choose default color.
             # You can change appearance later if desired.
-
-            ax_mesh.add_collection3d(
-                surface_collection
-            )
+            ax_mesh.add_collection3d(surface_collection)
 
         # Keep camera exactly fixed
-        ax_mesh.set_xlim(
-            mesh_xmin,
-            mesh_xmax,
-        )
-
-        ax_mesh.set_ylim(
-            mesh_ymin,
-            mesh_ymax,
-        )
-
-        ax_mesh.set_zlim(
-            mesh_zmin,
-            mesh_zmax,
-        )
+        ax_mesh.set_xlim(view_xmin, view_xmax)
+        ax_mesh.set_ylim(view_ymin, view_ymax)
+        ax_mesh.set_zlim(view_zmin, view_zmax)
 
         ax_mesh.view_init(
             elev=elev,
@@ -843,9 +975,9 @@ with writer.saving(
         # LABEL
         # ------------------------------------------
 
-        frame_text.set_text(
-            f"z slice {k + 1} / {Nz}"
-        )
+        # frame_text.set_text(
+        #     f"z slice {k + 1} / {Nz}"
+        # )
 
         writer.grab_frame()
 
